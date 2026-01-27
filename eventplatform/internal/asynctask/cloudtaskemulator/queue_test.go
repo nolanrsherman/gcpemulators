@@ -740,3 +740,182 @@ func TestDeleteQueue(t *testing.T) {
 		require.NotNil(t, raw.DeletedAt)
 	})
 }
+
+func TestPauseQueue(t *testing.T) {
+	ctx := context.Background()
+
+	mongoDB, cleanup := db.NewTestDatabase(ctx, t, testMongoURI)
+	defer cleanup(t)
+	err := db.RunMigrations(testMongoURI, mongoDB.Name())
+	require.NoError(t, err)
+
+	logger := zap.NewNop()
+	srv := NewServer(mongoDB, logger)
+
+	parent := "projects/test-project/locations/us-central1"
+
+	t.Run("rejects empty name", func(t *testing.T) {
+		_, err := srv.PauseQueue(ctx, &cloudtaskspb.PauseQueueRequest{
+			Name: "",
+		})
+		require.Error(t, err)
+		st, ok := grpcstatus.FromError(err)
+		require.True(t, ok)
+		require.Equal(t, codes.InvalidArgument, st.Code())
+	})
+
+	t.Run("rejects invalid name format", func(t *testing.T) {
+		_, err := srv.PauseQueue(ctx, &cloudtaskspb.PauseQueueRequest{
+			Name: "invalid-name",
+		})
+		require.Error(t, err)
+		st, ok := grpcstatus.FromError(err)
+		require.True(t, ok)
+		require.Equal(t, codes.InvalidArgument, st.Code())
+	})
+
+	t.Run("returns NotFound for non-existent queue", func(t *testing.T) {
+		name := parent + "/queues/non-existent"
+
+		_, err := srv.PauseQueue(ctx, &cloudtaskspb.PauseQueueRequest{
+			Name: name,
+		})
+		require.Error(t, err)
+		st, ok := grpcstatus.FromError(err)
+		require.True(t, ok)
+		require.Equal(t, codes.NotFound, st.Code())
+	})
+
+	t.Run("pauses an existing queue", func(t *testing.T) {
+		// Create a queue first
+		createRes, err := srv.CreateQueue(ctx, &cloudtaskspb.CreateQueueRequest{
+			Parent: parent,
+			Queue:  &cloudtaskspb.Queue{},
+		})
+		require.NoError(t, err)
+		name := createRes.GetName()
+
+		// Verify initial state is RUNNING
+		initialQueue, err := srv.GetQueue(ctx, &cloudtaskspb.GetQueueRequest{Name: name})
+		require.NoError(t, err)
+		require.Equal(t, cloudtaskspb.Queue_RUNNING, initialQueue.GetState())
+
+		// Pause the queue
+		pausedQueue, err := srv.PauseQueue(ctx, &cloudtaskspb.PauseQueueRequest{
+			Name: name,
+		})
+		require.NoError(t, err)
+		require.Equal(t, cloudtaskspb.Queue_PAUSED, pausedQueue.GetState())
+
+		// Verify the state persisted
+		verifyQueue, err := srv.GetQueue(ctx, &cloudtaskspb.GetQueueRequest{Name: name})
+		require.NoError(t, err)
+		require.Equal(t, cloudtaskspb.Queue_PAUSED, verifyQueue.GetState())
+	})
+}
+
+func TestResumeQueue(t *testing.T) {
+	ctx := context.Background()
+
+	mongoDB, cleanup := db.NewTestDatabase(ctx, t, testMongoURI)
+	defer cleanup(t)
+	err := db.RunMigrations(testMongoURI, mongoDB.Name())
+	require.NoError(t, err)
+
+	logger := zap.NewNop()
+	srv := NewServer(mongoDB, logger)
+
+	parent := "projects/test-project/locations/us-central1"
+
+	t.Run("rejects empty name", func(t *testing.T) {
+		_, err := srv.ResumeQueue(ctx, &cloudtaskspb.ResumeQueueRequest{
+			Name: "",
+		})
+		require.Error(t, err)
+		st, ok := grpcstatus.FromError(err)
+		require.True(t, ok)
+		require.Equal(t, codes.InvalidArgument, st.Code())
+	})
+
+	t.Run("rejects invalid name format", func(t *testing.T) {
+		_, err := srv.ResumeQueue(ctx, &cloudtaskspb.ResumeQueueRequest{
+			Name: "invalid-name",
+		})
+		require.Error(t, err)
+		st, ok := grpcstatus.FromError(err)
+		require.True(t, ok)
+		require.Equal(t, codes.InvalidArgument, st.Code())
+	})
+
+	t.Run("returns NotFound for non-existent queue", func(t *testing.T) {
+		name := parent + "/queues/non-existent"
+
+		_, err := srv.ResumeQueue(ctx, &cloudtaskspb.ResumeQueueRequest{
+			Name: name,
+		})
+		require.Error(t, err)
+		st, ok := grpcstatus.FromError(err)
+		require.True(t, ok)
+		require.Equal(t, codes.NotFound, st.Code())
+	})
+
+	t.Run("resumes a paused queue", func(t *testing.T) {
+		// Create a queue first
+		createRes, err := srv.CreateQueue(ctx, &cloudtaskspb.CreateQueueRequest{
+			Parent: parent,
+			Queue:  &cloudtaskspb.Queue{},
+		})
+		require.NoError(t, err)
+		name := createRes.GetName()
+
+		// Pause the queue first
+		_, err = srv.PauseQueue(ctx, &cloudtaskspb.PauseQueueRequest{
+			Name: name,
+		})
+		require.NoError(t, err)
+
+		// Verify it's paused
+		pausedQueue, err := srv.GetQueue(ctx, &cloudtaskspb.GetQueueRequest{Name: name})
+		require.NoError(t, err)
+		require.Equal(t, cloudtaskspb.Queue_PAUSED, pausedQueue.GetState())
+
+		// Resume the queue
+		resumedQueue, err := srv.ResumeQueue(ctx, &cloudtaskspb.ResumeQueueRequest{
+			Name: name,
+		})
+		require.NoError(t, err)
+		require.Equal(t, cloudtaskspb.Queue_RUNNING, resumedQueue.GetState())
+
+		// Verify the state persisted
+		verifyQueue, err := srv.GetQueue(ctx, &cloudtaskspb.GetQueueRequest{Name: name})
+		require.NoError(t, err)
+		require.Equal(t, cloudtaskspb.Queue_RUNNING, verifyQueue.GetState())
+	})
+
+	t.Run("resumes a running queue", func(t *testing.T) {
+		// Create a queue first (starts as RUNNING)
+		createRes, err := srv.CreateQueue(ctx, &cloudtaskspb.CreateQueueRequest{
+			Parent: parent,
+			Queue:  &cloudtaskspb.Queue{},
+		})
+		require.NoError(t, err)
+		name := createRes.GetName()
+
+		// Verify initial state is RUNNING
+		initialQueue, err := srv.GetQueue(ctx, &cloudtaskspb.GetQueueRequest{Name: name})
+		require.NoError(t, err)
+		require.Equal(t, cloudtaskspb.Queue_RUNNING, initialQueue.GetState())
+
+		// Resume the queue (should remain RUNNING)
+		resumedQueue, err := srv.ResumeQueue(ctx, &cloudtaskspb.ResumeQueueRequest{
+			Name: name,
+		})
+		require.NoError(t, err)
+		require.Equal(t, cloudtaskspb.Queue_RUNNING, resumedQueue.GetState())
+
+		// Verify the state persisted
+		verifyQueue, err := srv.GetQueue(ctx, &cloudtaskspb.GetQueueRequest{Name: name})
+		require.NoError(t, err)
+		require.Equal(t, cloudtaskspb.Queue_RUNNING, verifyQueue.GetState())
+	})
+}

@@ -503,8 +503,29 @@ func (s *Server) PurgeQueue(context.Context, *cloudtaskspb.PurgeQueueRequest) (*
 // still be added when the queue is paused. A queue is paused if its
 // [state][google.cloud.tasks.v2.Queue.state] is
 // [PAUSED][google.cloud.tasks.v2.Queue.State.PAUSED].
-func (s *Server) PauseQueue(context.Context, *cloudtaskspb.PauseQueueRequest) (*cloudtaskspb.Queue, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method PauseQueue not implemented")
+func (s *Server) PauseQueue(ctx context.Context, req *cloudtaskspb.PauseQueueRequest) (*cloudtaskspb.Queue, error) {
+	name := req.GetName()
+	if name == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "queue name is required")
+	}
+	if err := validateQueueName(name); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid queue name: %v", err)
+	}
+
+	if err := db.UpdateQueueState(ctx, s.db, name, cloudtaskspb.Queue_PAUSED); err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return nil, status.Errorf(codes.NotFound, "queue %s not found", name)
+		}
+		return nil, status.Errorf(codes.Internal, "failed to pause queue: %v", err)
+	}
+
+	// Fetch and return the updated queue
+	queue, err := db.SelectQueueByName(ctx, s.db, name)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to get updated queue: %v", err)
+	}
+
+	return queue.ToCloudTasksQueue(), nil
 }
 
 // Resume a queue.
@@ -521,8 +542,29 @@ func (s *Server) PauseQueue(context.Context, *cloudtaskspb.PauseQueueRequest) (*
 // queues, follow the 500/50/5 pattern described in
 // [Managing Cloud Tasks Scaling
 // Risks](https://cloud.google.com/tasks/docs/manage-cloud-task-scaling).
-func (s *Server) ResumeQueue(context.Context, *cloudtaskspb.ResumeQueueRequest) (*cloudtaskspb.Queue, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ResumeQueue not implemented")
+func (s *Server) ResumeQueue(ctx context.Context, req *cloudtaskspb.ResumeQueueRequest) (*cloudtaskspb.Queue, error) {
+	name := req.GetName()
+	if name == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "queue name is required")
+	}
+	if err := validateQueueName(name); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid queue name: %v", err)
+	}
+
+	if err := db.UpdateQueueState(ctx, s.db, name, cloudtaskspb.Queue_RUNNING); err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return nil, status.Errorf(codes.NotFound, "queue %s not found", name)
+		}
+		return nil, status.Errorf(codes.Internal, "failed to resume queue: %v", err)
+	}
+
+	// Fetch and return the updated queue
+	queue, err := db.SelectQueueByName(ctx, s.db, name)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to get updated queue: %v", err)
+	}
+
+	return queue.ToCloudTasksQueue(), nil
 }
 
 // validateQueueName validates that the queue name follows the Cloud Tasks format:

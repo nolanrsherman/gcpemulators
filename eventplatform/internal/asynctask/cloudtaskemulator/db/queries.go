@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"cloud.google.com/go/cloudtasks/apiv2/cloudtaskspb"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -85,4 +86,47 @@ func InsertTask(ctx context.Context, db *mongo.Database, task *Task) (*Task, err
 	}
 	task.Id = oid
 	return task, nil
+}
+
+// UpdateQueueState updates the state of a queue by name. Only updates queues
+// that have not been soft-deleted.
+func UpdateQueueState(ctx context.Context, db *mongo.Database, name string, state cloudtaskspb.Queue_State) error {
+	col := db.Collection(CollectionQueues)
+	now := time.Now()
+
+	res, err := col.UpdateOne(ctx,
+		bson.M{
+			"name":       name,
+			"deleted_at": bson.M{"$exists": false},
+		},
+		bson.M{
+			"$set": bson.M{
+				"state":      state,
+				"updated_at": now,
+			},
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update queue state: %w", err)
+	}
+	if res.MatchedCount == 0 {
+		return fmt.Errorf("failed to update queue state: %w", mongo.ErrNoDocuments)
+	}
+	return nil
+}
+
+func SelectQueuesWithIDNotInList(ctx context.Context, db *mongo.Database, ids []primitive.ObjectID) ([]Queue, error) {
+	col := db.Collection(CollectionQueues)
+	cursor, err := col.Find(ctx, bson.M{
+		"_id": bson.M{"$nin": ids},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to select queues with ID not in list: %w", err)
+	}
+	queues := make([]Queue, 0)
+	err = cursor.All(ctx, &queues)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode queues: %w", err)
+	}
+	return queues, nil
 }

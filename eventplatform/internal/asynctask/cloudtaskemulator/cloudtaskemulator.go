@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net"
 	"regexp"
 	"strconv"
@@ -17,12 +18,11 @@ import (
 	"time"
 
 	"cloud.google.com/go/cloudtasks/apiv2/cloudtaskspb"
+	"github.com/golang-migrate/migrate/v4"
 	"github.com/nolanco/eventplatform/internal/asynctask/cloudtaskemulator/db"
-	"github.com/nolanco/eventplatform/internal/legacy/slices"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
@@ -50,13 +50,12 @@ const (
 )
 
 type CloudTaskEmulator struct {
-	mongoDbURI          string
-	dbName              string
-	mongoDB             *mongo.Database
-	logger              *zap.Logger
-	port                string
-	managedQueueIds     []primitive.ObjectID
-	managedQueueIdsLock sync.RWMutex
+	mongoDbURI      string
+	dbName          string
+	mongoDB         *mongo.Database
+	logger          *zap.Logger
+	port            string
+	managedQueueIds map[primitive.ObjectID]struct{}
 }
 
 func NewCloudTaskEmulator(mongoDBURI, dbBane string, logger *zap.Logger, grpcPort string) *CloudTaskEmulator {
@@ -76,19 +75,18 @@ func NewCloudTaskEmulator(mongoDBURI, dbBane string, logger *zap.Logger, grpcPor
 	}
 
 	return &CloudTaskEmulator{
-		mongoDbURI:          mongoDBURI,
-		dbName:              dbBane,
-		logger:              logger.Named("cloudtaskemulator"),
-		port:                ":" + grpcPort,
-		managedQueueIds:     []primitive.ObjectID{},
-		managedQueueIdsLock: sync.RWMutex{},
+		mongoDbURI:      mongoDBURI,
+		dbName:          dbBane,
+		logger:          logger.Named("cloudtaskemulator"),
+		port:            ":" + grpcPort,
+		managedQueueIds: make(map[primitive.ObjectID]struct{}),
 	}
 }
 
 func (s *CloudTaskEmulator) Run(ctx context.Context) error {
 	defer s.logger.Sync()
 	err := db.RunMigrations(s.mongoDbURI, s.dbName)
-	if err != nil {
+	if err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}
 	mConn, err := db.NewConnection(context.Background(), s.mongoDbURI)
@@ -202,6 +200,7 @@ func (s *CloudTaskEmulator) runService(ctx context.Context) error {
 	}
 
 	wg := sync.WaitGroup{}
+	// Each Queue is going to get its own go routine to process the queue.
 	for _, queue := range queues {
 		wg.Add(1)
 		go func(queue db.Queue) {
@@ -213,123 +212,7 @@ func (s *CloudTaskEmulator) runService(ctx context.Context) error {
 		}(queue)
 	}
 
-	newQueues, err := s.newQueues(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get new queues: %w", err)
-	}
-
-	for queue := range newQueues {
-		wg.Add(1)
-		go func(queue db.Queue) {
-			defer wg.Done()
-			err := s.processQueue(ctx, queue)
-			if err != nil {
-				s.logger.Error("failed to process queue", zap.Error(err))
-			}
-		}(queue)
-	}
-
-	wg.Wait()
-
-	return nil
-}
-
-func (s *CloudTaskEmulator) newQueues(ctx context.Context) (<-chan db.Queue, error) {
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-
-	queueChan := make(chan db.Queue, 100)
-	go func() {
-		defer close(queueChan)
-
-		// Query immediately on start
-		if err := s.queryAndSendNewQueues(ctx, queueChan); err != nil {
-			s.logger.Error("failed to query new queues on startup", zap.Error(err))
-		}
-
-		for {
-			select {
-			case <-ctx.Done():
-				// Context cancelled - shutdown requested
-				return
-			case <-ticker.C:
-				// Query for new queues every 10 seconds
-				if err := s.queryAndSendNewQueues(ctx, queueChan); err != nil {
-					s.logger.Error("failed to query new queues", zap.Error(err))
-					// Continue even on error - will retry on next tick
-				}
-			}
-		}
-	}()
-
-	return queueChan, nil
-}
-
-func (s *CloudTaskEmulator) queryAndSendNewQueues(ctx context.Context, queueChan chan<- db.Queue) error {
-	// Get the list of currently managed queue IDs (read lock)
-	s.managedQueueIdsLock.RLock()
-	managedIDs := make([]primitive.ObjectID, len(s.managedQueueIds))
-	copy(managedIDs, s.managedQueueIds)
-	s.managedQueueIdsLock.RUnlock()
-
-	// Build query to find queues NOT in managedQueueIds
-	filter := bson.M{}
-	if len(managedIDs) > 0 {
-		filter["_id"] = bson.M{"$nin": managedIDs}
-	}
-
-	// Query for new queues
-	cursor, err := s.mongoDB.Collection(CollectionQueues).Find(ctx, filter)
-	if err != nil {
-		return fmt.Errorf("failed to query queues: %w", err)
-	}
-	defer cursor.Close(ctx)
-
-	// Iterate through results and send to channel
-	for cursor.Next(ctx) {
-		var queue db.Queue
-		if err := cursor.Decode(&queue); err != nil {
-			s.logger.Error("failed to decode queue", zap.Error(err))
-			continue
-		}
-
-		// Send queue to channel (non-blocking if channel is full)
-		select {
-		case queueChan <- queue:
-			// Successfully sent
-		case <-ctx.Done():
-			// Context cancelled while trying to send
-			return ctx.Err()
-		default:
-			// Channel is full - log warning but continue
-			s.logger.Warn("queue channel is full, skipping queue",
-				zap.String("queue_id", queue.Id.Hex()))
-		}
-	}
-
-	if err := cursor.Err(); err != nil {
-		return fmt.Errorf("cursor error: %w", err)
-	}
-
-	return nil
-}
-
-func (s *CloudTaskEmulator) processQueue(ctx context.Context, queue db.Queue) error {
-	s.managedQueueIdsLock.Lock()
-	s.managedQueueIds = append(s.managedQueueIds, queue.Id)
-	s.managedQueueIdsLock.Unlock()
-
-	defer func() {
-		s.managedQueueIdsLock.Lock()
-		s.managedQueueIds = slices.Filter(s.managedQueueIds, func(id primitive.ObjectID) bool {
-			return id != queue.Id
-		})
-		s.managedQueueIdsLock.Unlock()
-	}()
-
-	queueLock := sync.Mutex{}
-	wg := sync.WaitGroup{}
-	// keep the queue settings up to date.
+	// In a sub process we will keep querying for new queues ever 10s and start a new routine for them too.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -338,9 +221,72 @@ func (s *CloudTaskEmulator) processQueue(ctx context.Context, queue db.Queue) er
 			case <-ctx.Done():
 				return
 			case <-time.After(10 * time.Second):
+				// Query for new queues every 10 seconds
+				managedQueueIds := make([]primitive.ObjectID, 0, len(s.managedQueueIds))
+				for id := range s.managedQueueIds {
+					managedQueueIds = append(managedQueueIds, id)
+				}
+				newQueues, err := db.SelectQueuesWithIDNotInList(ctx, s.mongoDB, managedQueueIds)
+				if err != nil {
+					s.logger.Error("failed to query new queues", zap.Error(err))
+					continue
+				}
+				for _, queue := range newQueues {
+					select {
+					case <-ctx.Done():
+						return
+					default:
+					}
+					if _, ok := s.managedQueueIds[queue.Id]; ok {
+						// already managed this queue, skip it.
+						s.logger.Warn("queue already managed, skipping. This should not happen.", zap.String("queue_name", queue.Name), zap.String("queue_id", queue.Id.Hex()))
+						continue
+					}
+					// update that this is a queue id we are aware of.
+					s.managedQueueIds[queue.Id] = struct{}{}
+					// start a new go routine to process the queue.
+					wg.Add(1)
+					go func(queue db.Queue) {
+						defer wg.Done()
+						err := s.processQueue(ctx, queue)
+						if err != nil {
+							s.logger.Error("failed to process queue", zap.Error(err))
+						}
+					}(queue)
+				}
+			}
+		}
+	}()
+
+	// once the context is cancelled we will wait for
+	// all queue routines to complete.
+	wg.Wait()
+
+	return nil
+}
+
+func (s *CloudTaskEmulator) processQueue(ctx context.Context, queue db.Queue) error {
+	// Create a cancellable context for this queue. This allows us to cleanly
+	// shut down all goroutines when the queue is deleted or the parent context
+	// is cancelled.
+	queueCtx, cancelQueueCtx := context.WithCancel(ctx)
+	defer cancelQueueCtx() // Ensure context is cancelled when function returns
+
+	queueLock := sync.Mutex{}
+	wg := sync.WaitGroup{}
+
+	// keep the queue settings up to date.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-queueCtx.Done():
+				return
+			case <-time.After(10 * time.Second):
 				// get the queue from the database
 				newQueue := db.Queue{}
-				err := s.mongoDB.Collection(CollectionQueues).FindOne(ctx, bson.M{"_id": queue.Id}).Decode(&newQueue)
+				err := s.mongoDB.Collection(CollectionQueues).FindOne(queueCtx, bson.M{"_id": queue.Id}).Decode(&newQueue)
 				if err != nil {
 					s.logger.Error("failed to sync queue", zap.Error(err), zap.String("queue_name", queue.Name), zap.String("queue_id", queue.Id.Hex()))
 					queueLock.Lock()
@@ -360,11 +306,30 @@ func (s *CloudTaskEmulator) processQueue(ctx context.Context, queue db.Queue) er
 	// query tasks
 	for {
 		select {
-		case <-ctx.Done():
-			wg.Wait()
-			return ctx.Err()
+		case <-queueCtx.Done():
+			// Context cancelled (either parent cancelled or queue deleted)
+			wg.Wait() // Wait for all goroutines to finish
+			return queueCtx.Err()
 		default:
-			err := s.syncTasks(ctx, queue, 500)
+			// Check if queue was deleted (need to check under lock)
+			queueLock.Lock()
+			isDeleted := queue.DeletedAt != nil
+			currentState := queue.State
+			queueLock.Unlock()
+
+			if isDeleted {
+				// Queue is deleted - cancel the queue context to signal all
+				// goroutines to stop, then wait for them to finish.
+				cancelQueueCtx()
+				wg.Wait()
+				return nil
+			}
+			if currentState != cloudtaskspb.Queue_RUNNING {
+				// queue is not running, wait a few seconds and try again
+				time.Sleep(time.Second)
+				continue
+			}
+			err := s.syncTasks(queueCtx, queue, 500)
 			if err != nil {
 				time.Sleep(5 * time.Second)
 				if errors.Is(err, errNoTasksFound) {
@@ -382,86 +347,77 @@ func (s *CloudTaskEmulator) processQueue(ctx context.Context, queue db.Queue) er
 var errNoTasksFound = errors.New("no tasks found for queue")
 
 func (s *CloudTaskEmulator) syncTasks(ctx context.Context, eQ db.Queue, maxTasks int64) error {
-
-	maxConcurrentDispatches := 10
-	if eQ.MaxConcurrentDispatches > 0 {
-		maxConcurrentDispatches = int(eQ.MaxConcurrentDispatches)
-	}
-
-	taskChan := make(chan *cloudtaskspb.Task, maxConcurrentDispatches)
-
-	// Query tasks for this queue using cursor
-	cursor, err := s.mongoDB.Collection(CollectionTasks).Find(ctx, bson.M{
-		"queue_id": eQ.Id,
-	}, &options.FindOptions{
-		Sort:  bson.D{{Key: "created_at", Value: 1}},
-		Limit: &maxTasks,
-	})
-
-	if err != nil {
-		return fmt.Errorf("failed to query tasks for queue %s: %w", eQ.Name, err)
-	}
-	defer cursor.Close(ctx)
-	if cursor.RemainingBatchLength() == 0 {
+	// Create fake tasks with random IDs up to maxTasks amount
+	numTasks := int(maxTasks)
+	if numTasks <= 0 {
 		return errNoTasksFound
 	}
 
-	// Send tasks to channel one at a time
-	go func() {
-		defer close(taskChan)
-		for cursor.Next(ctx) {
-			var task cloudtaskspb.Task
-			if err := cursor.Decode(&task); err != nil {
-				s.logger.Error("failed to decode task",
-					zap.Error(err),
-					zap.String("queue_name", eQ.Name))
-				continue
-			}
+	// Create a semaphore channel to limit concurrency to 10
+	maxConcurrency := 10
+	semaphore := make(chan struct{}, maxConcurrency)
 
-			// Send task to channel, respecting context cancellation
-			select {
-			case taskChan <- &task:
-				// Successfully sent
-			case <-ctx.Done():
-				// Context cancelled while trying to send
-				return
-			}
-		}
+	var wg sync.WaitGroup
+	// Track if context was cancelled
+	var ctxErr error
 
-		// Check for cursor errors
-		if err := cursor.Err(); err != nil {
-			s.logger.Error("cursor error while querying tasks",
-				zap.Error(err),
-				zap.String("queue_name", eQ.Name))
-		}
-	}()
-
-	wg := sync.WaitGroup{}
-	for t := range taskChan {
+	// Process each task with max concurrency of 10
+	for i := 0; i < numTasks; i++ {
+		// Check if context was cancelled before starting new task
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			ctxErr = ctx.Err()
+			goto waitForCompletion
 		default:
 		}
+
+		// Generate a fake task with a random ID
+		taskID := primitive.NewObjectID().Hex()
+		task := &cloudtaskspb.Task{
+			Name: fmt.Sprintf("%s/tasks/%s", eQ.Name, taskID),
+		}
+
 		wg.Add(1)
-		go func() {
+		go func(t *cloudtaskspb.Task) {
 			defer wg.Done()
-			defer func() {
-				if r := recover(); r != nil {
-					s.logger.Error("panic while processing task", zap.Any("task", t))
-				}
-			}()
+
+			// Acquire semaphore (blocks if 10 tasks are already running)
+			select {
+			case semaphore <- struct{}{}:
+				defer func() { <-semaphore }() // Release semaphore when done
+			case <-ctx.Done():
+				// Context cancelled while waiting for semaphore
+				return
+			}
+
+			// Process the task
 			err := s.processTask(ctx, eQ, t)
 			if err != nil {
-				s.logger.Error("failed to process task", zap.Error(err))
+				s.logger.Error("failed to process task",
+					zap.Error(err),
+					zap.String("queue_name", eQ.Name),
+					zap.String("task_id", t.Name))
 			}
-		}()
+		}(task)
 	}
+
+waitForCompletion:
+	// Wait for all tasks to complete
 	wg.Wait()
+
+	// Return context error if one occurred
+	if ctxErr != nil {
+		return ctxErr
+	}
+
 	return nil
 }
 
 func (s *CloudTaskEmulator) processTask(ctx context.Context, eQ db.Queue, t *cloudtaskspb.Task) error {
-
+	s.logger.Info("processing task", zap.String("queue_name", eQ.Name), zap.String("queue_id", eQ.Id.Hex()), zap.String("task_id", t.Name))
+	// wait a small random time.
+	time.Sleep(time.Duration(rand.Intn(500)) * time.Millisecond)
+	// log that the task finished.
+	s.logger.Info("task finished", zap.String("queue_name", eQ.Name), zap.String("queue_id", eQ.Id.Hex()), zap.String("task_id", t.Name))
 	return nil
 }
