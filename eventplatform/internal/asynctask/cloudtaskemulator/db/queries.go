@@ -130,3 +130,19 @@ func SelectQueuesWithIDNotInList(ctx context.Context, db *mongo.Database, ids []
 	}
 	return queues, nil
 }
+
+func SelectAllQueuesWithDeletedAtNotSet(ctx context.Context, db *mongo.Database) ([]Queue, error) {
+	col := db.Collection(CollectionQueues)
+	cursor, err := col.Find(ctx, bson.M{
+		"deleted_at": bson.M{"$exists": false},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to select all queues: %w", err)
+	}
+	queues := make([]Queue, 0)
+	err = cursor.All(ctx, &queues)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode queues: %w", err)
+	}
+	return queues, nil
+}

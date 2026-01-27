@@ -50,12 +50,17 @@ const (
 )
 
 type CloudTaskEmulator struct {
-	mongoDbURI      string
-	dbName          string
-	mongoDB         *mongo.Database
-	logger          *zap.Logger
-	port            string
-	managedQueueIds map[primitive.ObjectID]struct{}
+	mongoDbURI           string
+	dbName               string
+	mongoDB              *mongo.Database
+	logger               *zap.Logger
+	port                 string
+	managedQueueIds      map[primitive.ObjectID]struct{}
+	specialEventChannels specialEventChannels
+}
+
+type specialEventChannels struct {
+	cloudTaskEmulatorReady chan struct{}
 }
 
 func NewCloudTaskEmulator(mongoDBURI, dbBane string, logger *zap.Logger, grpcPort string) *CloudTaskEmulator {
@@ -80,6 +85,9 @@ func NewCloudTaskEmulator(mongoDBURI, dbBane string, logger *zap.Logger, grpcPor
 		logger:          logger.Named("cloudtaskemulator"),
 		port:            ":" + grpcPort,
 		managedQueueIds: make(map[primitive.ObjectID]struct{}),
+		specialEventChannels: specialEventChannels{
+			cloudTaskEmulatorReady: make(chan struct{}, 1),
+		},
 	}
 }
 
@@ -102,16 +110,19 @@ func (s *CloudTaskEmulator) Run(ctx context.Context) error {
 
 	// Start the gRPC server
 	g.Go(func() error {
+		defer s.logger.Debug("goroutine stopped: runGRPCServer")
 		return s.runGRPCServer(gctx)
 	})
 
 	// Start the background service
 	g.Go(func() error {
+		defer s.logger.Debug("goroutine stopped: runService")
 		return s.runService(gctx)
 	})
 
 	// Wait for all goroutines to complete
 	// Returns the first error from any goroutine, or nil if all complete successfully
+	s.specialEventChannels.cloudTaskEmulatorReady <- struct{}{}
 	return g.Wait()
 }
 
@@ -132,6 +143,7 @@ func (s *CloudTaskEmulator) runGRPCServer(ctx context.Context) error {
 
 	// Start server in goroutine
 	go func() {
+		defer s.logger.Debug("goroutine stopped: grpcServer.Serve", zap.String("port", s.port))
 		err := grpcServer.Serve(lis)
 		// Always signal completion, even on normal shutdown
 		// grpc.ErrServerStopped is returned on normal shutdown, which is not an error
@@ -148,6 +160,7 @@ func (s *CloudTaskEmulator) runGRPCServer(ctx context.Context) error {
 		// Graceful shutdown
 		stopped := make(chan struct{})
 		go func() {
+			defer s.logger.Debug("goroutine stopped: grpcServer.GracefulStop")
 			grpcServer.GracefulStop()
 			close(stopped)
 		}()
@@ -184,85 +197,83 @@ func (s *CloudTaskEmulator) runService(ctx context.Context) error {
 	// when it exits (or nil if it completes successfully)
 	// The context will be cancelled if any other goroutine in the group fails
 
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
+	// Create an errgroup to manage all queue processing goroutines
+	// This allows errors from any goroutine to be propagated up
+	g, gctx := errgroup.WithContext(ctx)
 
 	// get all current queues
-	cursor, err := s.mongoDB.Collection(CollectionQueues).Find(ctx, bson.M{})
+	queues, err := db.SelectAllQueuesWithDeletedAtNotSet(gctx, s.mongoDB)
 	if err != nil {
 		return fmt.Errorf("failed to get queues: %w", err)
 	}
-	defer cursor.Close(ctx)
 
-	var queues []db.Queue
-	if err := cursor.All(ctx, &queues); err != nil {
-		return fmt.Errorf("failed to get queues: %w", err)
-	}
-
-	wg := sync.WaitGroup{}
 	// Each Queue is going to get its own go routine to process the queue.
 	for _, queue := range queues {
-		wg.Add(1)
-		go func(queue db.Queue) {
-			defer wg.Done()
-			err := s.processQueue(ctx, queue)
+		// Track this queue as managed
+		s.managedQueueIds[queue.Id] = struct{}{}
+		g.Go(func() error {
+			defer s.logger.Debug("goroutine stopped: processQueue (initial)", zap.String("queue_id", queue.Id.Hex()), zap.String("queue_name", queue.Name))
+			err := s.processQueue(gctx, queue)
 			if err != nil {
-				s.logger.Error("failed to process queue", zap.Error(err))
+				s.logger.Error("failed to process queue", zap.Error(err), zap.String("queue_id", queue.Id.Hex()))
+				return fmt.Errorf("failed to process queue %s: %w", queue.Id.Hex(), err)
 			}
-		}(queue)
+			return nil
+		})
 	}
 
-	// In a sub process we will keep querying for new queues ever 10s and start a new routine for them too.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	// In a sub process we will keep querying for new queues every 10s and start a new routine for them too.
+	g.Go(func() error {
+		defer s.logger.Debug("goroutine stopped: newQueueDiscovery")
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+
 		for {
 			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(10 * time.Second):
+			case <-gctx.Done():
+				return gctx.Err()
+			case <-ticker.C:
 				// Query for new queues every 10 seconds
 				managedQueueIds := make([]primitive.ObjectID, 0, len(s.managedQueueIds))
 				for id := range s.managedQueueIds {
 					managedQueueIds = append(managedQueueIds, id)
 				}
-				newQueues, err := db.SelectQueuesWithIDNotInList(ctx, s.mongoDB, managedQueueIds)
+				newQueues, err := db.SelectQueuesWithIDNotInList(gctx, s.mongoDB, managedQueueIds)
 				if err != nil {
 					s.logger.Error("failed to query new queues", zap.Error(err))
-					continue
+					return fmt.Errorf("failed to query new queues: %w", err)
 				}
 				for _, queue := range newQueues {
 					select {
-					case <-ctx.Done():
-						return
+					case <-gctx.Done():
+						return gctx.Err()
 					default:
 					}
+					// Check if queue is already being managed (with lock protection)
 					if _, ok := s.managedQueueIds[queue.Id]; ok {
-						// already managed this queue, skip it.
-						s.logger.Warn("queue already managed, skipping. This should not happen.", zap.String("queue_name", queue.Name), zap.String("queue_id", queue.Id.Hex()))
+						s.logger.Warn("queue already managed, skipping", zap.String("queue_id", queue.Id.Hex()))
 						continue
 					}
 					// update that this is a queue id we are aware of.
 					s.managedQueueIds[queue.Id] = struct{}{}
-					// start a new go routine to process the queue.
-					wg.Add(1)
-					go func(queue db.Queue) {
-						defer wg.Done()
-						err := s.processQueue(ctx, queue)
+					// start a new go routine to process the queue using the same errgroup
+					g.Go(func() error {
+						defer s.logger.Debug("goroutine stopped: processQueue (discovered)", zap.String("queue_id", queue.Id.Hex()), zap.String("queue_name", queue.Name))
+						err := s.processQueue(gctx, queue)
 						if err != nil {
-							s.logger.Error("failed to process queue", zap.Error(err))
+							s.logger.Error("failed to process queue", zap.Error(err), zap.String("queue_id", queue.Id.Hex()))
+							return fmt.Errorf("failed to process queue %s: %w", queue.Id.Hex(), err)
 						}
-					}(queue)
+						return nil
+					})
 				}
 			}
 		}
-	}()
+	})
 
-	// once the context is cancelled we will wait for
-	// all queue routines to complete.
-	wg.Wait()
-
-	return nil
+	// Wait for all goroutines to complete
+	// Returns the first error from any goroutine, or nil if all complete successfully
+	return g.Wait()
 }
 
 func (s *CloudTaskEmulator) processQueue(ctx context.Context, queue db.Queue) error {
@@ -276,9 +287,13 @@ func (s *CloudTaskEmulator) processQueue(ctx context.Context, queue db.Queue) er
 	wg := sync.WaitGroup{}
 
 	// keep the queue settings up to date.
+	syncQueueErr := make(chan error, 1)
 	wg.Add(1)
 	go func() {
-		defer wg.Done()
+		defer func() {
+			wg.Done()
+			s.logger.Debug("goroutine stopped: queueSync", zap.String("queue_id", queue.Id.Hex()), zap.String("queue_name", queue.Name))
+		}()
 		for {
 			select {
 			case <-queueCtx.Done():
@@ -292,7 +307,7 @@ func (s *CloudTaskEmulator) processQueue(ctx context.Context, queue db.Queue) er
 					queueLock.Lock()
 					queue.State = cloudtaskspb.Queue_STATE_UNSPECIFIED
 					queueLock.Unlock()
-					continue
+					syncQueueErr <- err
 				}
 				queueLock.Lock()
 				queue = newQueue
@@ -310,6 +325,10 @@ func (s *CloudTaskEmulator) processQueue(ctx context.Context, queue db.Queue) er
 			// Context cancelled (either parent cancelled or queue deleted)
 			wg.Wait() // Wait for all goroutines to finish
 			return queueCtx.Err()
+		case err := <-syncQueueErr:
+			cancelQueueCtx()
+			wg.Wait()
+			return fmt.Errorf("failed to sync queue: %w", err)
 		default:
 			// Check if queue was deleted (need to check under lock)
 			queueLock.Lock()
@@ -331,14 +350,12 @@ func (s *CloudTaskEmulator) processQueue(ctx context.Context, queue db.Queue) er
 			}
 			err := s.syncTasks(queueCtx, queue, 500)
 			if err != nil {
-				time.Sleep(5 * time.Second)
 				if errors.Is(err, errNoTasksFound) {
 					// no tasks found, wait a few seconds and try again
+					time.Sleep(5 * time.Second)
 					continue
 				}
-				// log and wait a few seconds before trying again
-				s.logger.Error("failed to sync tasks", zap.Error(err), zap.String("queue_name", queue.Name), zap.String("queue_id", queue.Id.Hex()))
-				continue
+				return fmt.Errorf("failed to sync tasks: %w", err)
 			}
 		}
 	}
@@ -379,7 +396,10 @@ func (s *CloudTaskEmulator) syncTasks(ctx context.Context, eQ db.Queue, maxTasks
 
 		wg.Add(1)
 		go func(t *cloudtaskspb.Task) {
-			defer wg.Done()
+			defer func() {
+				wg.Done()
+				s.logger.Debug("goroutine stopped: processTask", zap.String("queue_id", eQ.Id.Hex()), zap.String("queue_name", eQ.Name), zap.String("task_id", t.Name))
+			}()
 
 			// Acquire semaphore (blocks if 10 tasks are already running)
 			select {

@@ -65,13 +65,13 @@ func RunMigrations(connURI string, dbName string) error {
 	migrationsDir := filepath.Join(filepath.Dir(filename), "./migrations")
 	migrationsPath, err := filepath.Abs(migrationsDir)
 	if err != nil {
-		return fmt.Errorf("failed to resolve migrations path: %v", err)
+		return fmt.Errorf("failed to resolve migrations path: %w", err)
 	}
 	sourceURI := fmt.Sprintf("file://%s", migrationsPath)
 
 	u, err := url.Parse(connURI)
 	if err != nil {
-		return fmt.Errorf("failed to parse connection URI: %v", err)
+		return fmt.Errorf("failed to parse connection URI: %w", err)
 	}
 	u.Path = dbName
 	connectionURI := u.String()
@@ -79,11 +79,11 @@ func RunMigrations(connURI string, dbName string) error {
 	// Run the migrations using golang-migrate
 	m, err := migrate.New(sourceURI, connectionURI)
 	if err != nil {
-		return fmt.Errorf("failed to create migrate: %v", err)
+		return fmt.Errorf("failed to create migrate: %w", err)
 	}
 	err = m.Up()
 	if err != nil {
-		return fmt.Errorf("failed to run migrations: %v", err)
+		return fmt.Errorf("failed to run migrations: %w", err)
 	}
 	return nil
 }
@@ -111,11 +111,11 @@ func NewTestDatabase(ctx context.Context, t *testing.T, uri string) (*mongo.Data
 		// Drop the database
 		err := db.Drop(ctx)
 		if err != nil {
-			t.Errorf("failed to drop database: %v", err)
+			t.Errorf("failed to drop database: %w", err)
 		}
 		err = client.Disconnect(ctx)
 		if err != nil {
-			t.Errorf("failed to disconnect from mongo: %v", err)
+			t.Errorf("failed to disconnect from mongo: %w", err)
 		}
 	}
 }
