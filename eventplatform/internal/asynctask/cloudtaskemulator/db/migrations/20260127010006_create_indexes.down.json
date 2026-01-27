@@ -1,0 +1,18 @@
+[
+  {
+    "dropIndexes": "cloudtaskemulator_queues",
+    "index": "idx_queues_name_unique"
+  },
+  {
+    "dropIndexes": "cloudtaskemulator_queues",
+    "index": "idx_queues_deleted_at_ttl"
+  },
+  {
+    "dropIndexes": "cloudtaskemulator_tasks",
+    "index": "idx_tasks_name_unique"
+  },
+  {
+    "dropIndexes": "cloudtaskemulator_tasks",
+    "index": "idx_tasks_schedule_time"
+  }
+]
