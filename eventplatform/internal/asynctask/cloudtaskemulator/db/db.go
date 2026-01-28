@@ -111,11 +111,11 @@ func NewTestDatabase(ctx context.Context, t *testing.T, uri string) (*mongo.Data
 		// Drop the database
 		err := db.Drop(ctx)
 		if err != nil {
-			t.Errorf("failed to drop database: %w", err)
+			t.Errorf("failed to drop database: %v", err)
 		}
 		err = client.Disconnect(ctx)
 		if err != nil {
-			t.Errorf("failed to disconnect from mongo: %w", err)
+			t.Errorf("failed to disconnect from mongo: %v", err)
 		}
 	}
 }

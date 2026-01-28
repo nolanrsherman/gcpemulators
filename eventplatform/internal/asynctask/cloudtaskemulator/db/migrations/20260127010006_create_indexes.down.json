@@ -13,6 +13,6 @@
   },
   {
     "dropIndexes": "cloudtaskemulator_tasks",
-    "index": "idx_tasks_schedule_time"
+    "index": "idx_tasks_schedule_and_lock_expires_at"
   }
 ]

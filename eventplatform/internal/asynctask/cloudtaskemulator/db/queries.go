@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // Unique Index on queue.name
@@ -28,6 +30,20 @@ func SelectQueueByName(ctx context.Context, db *mongo.Database, name string) (*Q
 	}).Decode(&queue)
 	if err != nil {
 		return nil, fmt.Errorf("failed to select queue by name: %w", err)
+	}
+	return &queue, nil
+}
+
+func SelectQueueByID(ctx context.Context, db *mongo.Database, id primitive.ObjectID) (*Queue, error) {
+	col := db.Collection(CollectionQueues)
+	var queue Queue
+	// Only return queues that have not been soft-deleted.
+	err := col.FindOne(ctx, bson.M{
+		"_id":        id,
+		"deleted_at": bson.M{"$exists": false},
+	}).Decode(&queue)
+	if err != nil {
+		return nil, fmt.Errorf("failed to select queue by ID: %w", err)
 	}
 	return &queue, nil
 }
@@ -145,4 +161,136 @@ func SelectAllQueuesWithDeletedAtNotSet(ctx context.Context, db *mongo.Database)
 		return nil, fmt.Errorf("failed to decode queues: %w", err)
 	}
 	return queues, nil
+}
+
+func SelectTaskByName(ctx context.Context, db *mongo.Database, name string) (*Task, error) {
+	col := db.Collection(CollectionTasks)
+	var task Task
+	err := col.FindOne(ctx, bson.M{
+		"name":       name,
+		"deleted_at": bson.M{"$exists": false},
+	}).Decode(&task)
+	if err != nil {
+		return nil, fmt.Errorf("failed to select task by name: %w", err)
+	}
+	return &task, nil
+}
+
+// SoftDeleteTaskByName marks a task as deleted by setting DeletedAt. A TTL
+// index on this field is responsible for physically removing the document
+// after a retention period.
+func SoftDeleteTaskByName(ctx context.Context, db *mongo.Database, name string) error {
+	col := db.Collection(CollectionTasks)
+	now := time.Now()
+
+	res, err := col.UpdateOne(ctx,
+		bson.M{
+			"name":       name,
+			"deleted_at": bson.M{"$exists": false},
+		},
+		bson.M{
+			"$set": bson.M{
+				"deleted_at": now,
+				"updated_at": now,
+			},
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to soft delete task: %w", err)
+	}
+	if res.MatchedCount == 0 {
+		return fmt.Errorf("failed to soft delete task: %w", mongo.ErrNoDocuments)
+	}
+	return nil
+}
+
+// SelectNextTaskAndLock atomically claims the next available task
+// for the given queue and marks it as running. It also sets a lock expiration
+// based on the task's dispatch_deadline to allow stuck tasks to be reclaimed:
+//
+//	lock_expires_at = now + dispatch_deadline + 30s
+//
+// If dispatch_deadline is not set, a reasonable default (10 minutes) is used.
+func SelectNextTaskAndLock(ctx context.Context, db *mongo.Database, queueId primitive.ObjectID) (*Task, error) {
+	col := db.Collection(CollectionTasks)
+	now := time.Now()
+
+	// Query for tasks that are:
+	// 1. In the correct queue
+	// 2. Either pending (never claimed) OR running with expired lock (stuck)
+	// 3. Scheduled to run now or earlier
+	query := bson.M{
+		"queue_id":   queueId,
+		"deleted_at": bson.M{"$exists": false},
+		"$or": []bson.M{
+			{
+				"status":        TaskStatusPending,
+				"schedule_time": bson.M{"$lte": now},
+			},
+			{
+				"status":          TaskStatusRunning,
+				"schedule_time":   bson.M{"$lte": now},
+				"lock_expires_at": bson.M{"$lt": now}, // Lock expired (stuck task)
+			},
+		},
+	}
+
+	// First, atomically claim the task and set a temporary lock_expires_at
+	// slightly in the future so no other worker can match it in the same query.
+	// We will refine lock_expires_at based on dispatch_deadline after we know
+	// which task we claimed.
+	tempLease := 1 * time.Minute
+	update := bson.M{
+		"$set": bson.M{
+			"status":          TaskStatusRunning,
+			"lock_expires_at": now.Add(tempLease),
+			"updated_at":      now,
+		},
+	}
+
+	// Sort: Get earliest scheduled (matches index)
+	sort := bson.D{{Key: "schedule_time", Value: 1}}
+
+	opts := options.FindOneAndUpdate().
+		SetSort(sort).
+		SetReturnDocument(options.After) // Return the updated document
+
+	var task Task
+	err := col.FindOneAndUpdate(ctx, query, update, opts).Decode(&task)
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			// No task available - this is normal, not an error
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	// Compute lock_expires_at from task.DispatchDeadline: now + deadline + 30s.
+	// If no dispatch_deadline is set, use 10 minutes as a default HTTP deadline.
+	leaseDuration := 10 * time.Minute
+	if task.DispatchDeadline != nil {
+		leaseDuration = *task.DispatchDeadline
+	}
+	lockExpiresAt := now.Add(leaseDuration + 30*time.Second)
+
+	_, err = col.UpdateOne(ctx, bson.M{"_id": task.Id}, bson.M{
+		"$set": bson.M{
+			"lock_expires_at": lockExpiresAt,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &task, nil
+}
+
+func SelectTaskByIDIncludingDeleted(ctx context.Context, db *mongo.Database, id primitive.ObjectID) (*Task, error) {
+	col := db.Collection(CollectionTasks)
+	var task Task
+	err := col.FindOne(ctx, bson.M{"_id": id}).Decode(&task)
+	if err != nil {
+		return nil, fmt.Errorf("failed to select task by ID: %w", err)
+	}
+	return &task, nil
 }

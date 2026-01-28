@@ -255,12 +255,28 @@ func (q *Queue) ToCloudTasksQueue() *cloudtaskspb.Queue {
 	}
 }
 
+type TaskStatus int
+
+const (
+	TaskStatusPending   TaskStatus = 0
+	TaskStatusRunning   TaskStatus = 1
+	TaskStatusSucceeded TaskStatus = 2
+	TaskStatusFailed    TaskStatus = 3
+)
+
 type Task struct {
 	Id        primitive.ObjectID `bson:"_id,omitempty" json:"_id,omitempty"`
-	Task      *cloudtaskspb.Task `bson:"task,omitempty" json:"task,omitempty"`
 	CreatedAt time.Time          `bson:"created_at,omitempty" json:"created_at,omitempty"`
 	UpdatedAt time.Time          `bson:"updated_at,omitempty" json:"updated_at,omitempty"`
-
+	DeletedAt *time.Time         `bson:"deleted_at,omitempty" json:"deleted_at,omitempty"`
+	Status    TaskStatus         `bson:"status,omitempty" json:"status,omitempty"`
+	// QueueID is the ObjectID of the queue this task belongs to.
+	// Used for efficient querying and indexing.
+	QueueID primitive.ObjectID `bson:"queue_id,omitempty" json:"queue_id,omitempty"`
+	// LockExpiresAt is when the worker's lease expires (prevents stuck tasks).
+	// If task is "running" and LockExpiresAt < now, task can be reclaimed.
+	// Set to: now + lease_duration when task is claimed.
+	LockExpiresAt *time.Time `bson:"lock_expires_at,omitempty" json:"lock_expires_at,omitempty"`
 	// from cloudtaskspb.Task
 	// Optionally caller-specified in
 	// [CreateTask][google.cloud.tasks.v2.CloudTasks.CreateTask].
@@ -354,9 +370,6 @@ type Task struct {
 
 	// Output only. The status of the task's last attempt.
 	LastAttempt *Task_Attempt `json:"last_attempt,omitempty"`
-	// Output only. The view specifies which subset of the
-	// [Task][google.cloud.tasks.v2.Task] has been returned.
-	View cloudtaskspb.Task_View `json:"view,omitempty"`
 }
 
 type Task_Attempt struct {
@@ -429,4 +442,86 @@ type Task_HttpRequest struct {
 	// or PATCH. It is an error to set body on a task with an incompatible
 	// [HttpMethod][google.cloud.tasks.v2.HttpMethod].
 	Body []byte `json:"body,omitempty"`
+}
+
+// ToCloudTasksTask converts a db.Task to a cloudtaskspb.Task.
+func (t *Task) ToCloudTasksTask(view cloudtaskspb.Task_View) *cloudtaskspb.Task {
+	var scheduleTime *timestamppb.Timestamp
+	if t.ScheduleTime != nil {
+		scheduleTime = timestamppb.New(*t.ScheduleTime)
+	}
+	var createTime *timestamppb.Timestamp
+	if t.CreateTime != nil {
+		createTime = timestamppb.New(*t.CreateTime)
+	}
+	var dispatchDeadline *durationpb.Duration
+	if t.DispatchDeadline != nil {
+		dispatchDeadline = durationpb.New(*t.DispatchDeadline)
+	}
+	var httpRequest *cloudtaskspb.HttpRequest
+	if t.HttpRequest != nil {
+		httpRequest = &cloudtaskspb.HttpRequest{
+			Url:        t.HttpRequest.Url,
+			HttpMethod: t.HttpRequest.HttpMethod,
+			Headers:    t.HttpRequest.Headers,
+			Body:       t.HttpRequest.Body,
+		}
+	}
+
+	var firstAttempt *cloudtaskspb.Attempt
+	if t.FirstAttempt != nil {
+		firstAttempt = &cloudtaskspb.Attempt{}
+		if t.FirstAttempt.ScheduleTime != nil {
+			firstAttempt.ScheduleTime = timestamppb.New(*t.FirstAttempt.ScheduleTime)
+		}
+		if t.FirstAttempt.DispatchTime != nil {
+			firstAttempt.DispatchTime = timestamppb.New(*t.FirstAttempt.DispatchTime)
+		}
+		if t.FirstAttempt.ResponseTime != nil {
+			firstAttempt.ResponseTime = timestamppb.New(*t.FirstAttempt.ResponseTime)
+		}
+		if t.FirstAttempt.ResponseStatus != nil {
+			firstAttempt.ResponseStatus = t.FirstAttempt.ResponseStatus
+		}
+	}
+
+	var lastAttempt *cloudtaskspb.Attempt
+	if t.LastAttempt != nil {
+		lastAttempt = &cloudtaskspb.Attempt{}
+		if t.LastAttempt.ScheduleTime != nil {
+			lastAttempt.ScheduleTime = timestamppb.New(*t.LastAttempt.ScheduleTime)
+		}
+		if t.LastAttempt.DispatchTime != nil {
+			lastAttempt.DispatchTime = timestamppb.New(*t.LastAttempt.DispatchTime)
+		}
+		if t.LastAttempt.ResponseTime != nil {
+			lastAttempt.ResponseTime = timestamppb.New(*t.LastAttempt.ResponseTime)
+		}
+		if t.LastAttempt.ResponseStatus != nil {
+			lastAttempt.ResponseStatus = t.LastAttempt.ResponseStatus
+		}
+	}
+
+	task := &cloudtaskspb.Task{
+		Name:             t.Name,
+		ScheduleTime:     scheduleTime,
+		CreateTime:       createTime,
+		DispatchDeadline: dispatchDeadline,
+		DispatchCount:    t.DispatchCount,
+		ResponseCount:    t.ResponseCount,
+		FirstAttempt:     firstAttempt,
+		LastAttempt:      lastAttempt,
+		// this is not implemented, we return what the caller sends.
+		// ideally we would only return data for that specific view.
+		View: view,
+	}
+
+	// Set message type based on what we have
+	if httpRequest != nil {
+		task.MessageType = &cloudtaskspb.Task_HttpRequest{
+			HttpRequest: httpRequest,
+		}
+	}
+
+	return task
 }
