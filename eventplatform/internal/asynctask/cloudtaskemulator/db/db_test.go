@@ -80,7 +80,7 @@ func TestInsertTask(t *testing.T) {
 	t.Run("should be able to insert a task", func(t *testing.T) {
 		task := &Task{
 			Name:        "projects/test-project/locations/us-central1/queues/test-queue/tasks/test-task-123",
-			MessageType: "Task_HttpRequest",
+			MessageType: MessageTypeHttpRequest,
 			HttpRequest: &Task_HttpRequest{
 				HttpMethod: cloudtaskspb.HttpMethod_POST,
 				Url:        "https://example.com/api/endpoint",
@@ -113,7 +113,7 @@ func TestInsertTask(t *testing.T) {
 		// Insert first task
 		task1 := &Task{
 			Name:        taskName,
-			MessageType: "Task_HttpRequest",
+			MessageType: MessageTypeHttpRequest,
 			HttpRequest: &Task_HttpRequest{
 				HttpMethod: cloudtaskspb.HttpMethod_POST,
 				Url:        "https://example.com/api/endpoint1",
@@ -127,7 +127,7 @@ func TestInsertTask(t *testing.T) {
 		// Try to insert a second task with the same name
 		task2 := &Task{
 			Name:        taskName,
-			MessageType: "Task_HttpRequest",
+			MessageType: MessageTypeHttpRequest,
 			HttpRequest: &Task_HttpRequest{
 				HttpMethod: cloudtaskspb.HttpMethod_GET,
 				Url:        "https://example.com/api/endpoint2",

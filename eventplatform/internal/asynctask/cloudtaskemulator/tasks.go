@@ -16,6 +16,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -233,7 +234,8 @@ func (s *Server) CreateTask(ctx context.Context, req *cloudtaskspb.CreateTaskReq
 	var dispatchDeadline *time.Duration
 	if req.Task.GetDispatchDeadline() != nil {
 		deadline := req.Task.GetDispatchDeadline().AsDuration()
-		if deadline < 15*time.Second || deadline > 30*time.Minute {
+		// we don't enforce the lower bounds to allow for testing since this is just an emulator.
+		if deadline < 0 || deadline > 30*time.Minute {
 			return nil, status.Errorf(codes.InvalidArgument, "dispatch_deadline must be in the interval [15 seconds, 30 minutes]")
 		}
 		dispatchDeadline = &deadline
@@ -280,7 +282,7 @@ func (s *Server) CreateTask(ctx context.Context, req *cloudtaskspb.CreateTaskReq
 		Status:    db.TaskStatusPending,
 		QueueID:   queue.Id,
 		// from cloudtaskspb.Task
-		MessageType: "Task_HttpRequest",
+		MessageType: db.MessageTypeHttpRequest,
 		HttpRequest: &db.Task_HttpRequest{
 			Url:        httpRequest.GetUrl(),
 			HttpMethod: httpMethod,
@@ -428,7 +430,8 @@ func (s *Server) RunTask(ctx context.Context, req *cloudtaskspb.RunTaskRequest) 
 	if task.DispatchDeadline != nil {
 		leaseDuration = *task.DispatchDeadline
 	}
-	lockExpiresAt := now.Add(leaseDuration + 30*time.Second)
+	lockDuration := leaseDuration + 30*time.Second
+	lockExpiresAt := now.Add(lockDuration)
 
 	col := s.db.Collection(db.CollectionTasks)
 	updates := bson.M{
@@ -440,28 +443,32 @@ func (s *Server) RunTask(ctx context.Context, req *cloudtaskspb.RunTaskRequest) 
 	opts := options.FindOneAndUpdate().
 		SetReturnDocument(options.After)
 	sr := col.FindOneAndUpdate(ctx, bson.M{"_id": task.Id}, bson.M{"$set": updates}, opts)
-	if err := sr.Decode(&task); err != nil {
+	claimedTask := &db.Task{}
+	if err := sr.Decode(&claimedTask); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to decode task: %v", err)
 	}
 
-	// Process the task (this will dispatch it and update its status)
-	err = processTask(ctx, s.db, s.logger, *queue, task)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to process task: %v", err)
-	}
+	go func(queue *db.Queue, t *db.Task, timeout time.Duration) {
+		// Use a background or detached context so it outlives the RPC deadline,
+		// but consider adding a reasonable timeout to avoid runaway work.
+		bgCtx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
 
-	// Fetch the task again to get updated status
-	updatedTask, err := db.SelectTaskByIDIncludingDeleted(ctx, s.db, task.Id)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get updated task: %v", err)
-	}
+		if err := processTask(bgCtx, s.db, s.logger, queue, t); err != nil {
+			s.logger.Error("RunTask background processing failed",
+				zap.String("task_name", t.Name),
+				zap.Error(err),
+			)
+		}
+	}(queue, claimedTask, lockDuration)
 
+	// Return task in state before running.
 	// Convert to cloudtaskspb.Task
 	view := cloudtaskspb.Task_BASIC
 	if req.ResponseView != cloudtaskspb.Task_VIEW_UNSPECIFIED {
 		view = req.ResponseView
 	}
-	return updatedTask.ToCloudTasksTask(view), nil
+	return task.ToCloudTasksTask(view), nil
 }
 
 // validateTaskName validates that the task name follows the Cloud Tasks format:

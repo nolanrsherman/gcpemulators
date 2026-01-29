@@ -131,7 +131,7 @@ func UpdateQueueState(ctx context.Context, db *mongo.Database, name string, stat
 	return nil
 }
 
-func SelectQueuesWithIDNotInList(ctx context.Context, db *mongo.Database, ids []primitive.ObjectID) ([]Queue, error) {
+func SelectQueuesWithIDNotInList(ctx context.Context, db *mongo.Database, ids []primitive.ObjectID) ([]*Queue, error) {
 	col := db.Collection(CollectionQueues)
 	cursor, err := col.Find(ctx, bson.M{
 		"_id": bson.M{"$nin": ids},
@@ -139,7 +139,7 @@ func SelectQueuesWithIDNotInList(ctx context.Context, db *mongo.Database, ids []
 	if err != nil {
 		return nil, fmt.Errorf("failed to select queues with ID not in list: %w", err)
 	}
-	queues := make([]Queue, 0)
+	queues := make([]*Queue, 0)
 	err = cursor.All(ctx, &queues)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode queues: %w", err)
@@ -147,7 +147,7 @@ func SelectQueuesWithIDNotInList(ctx context.Context, db *mongo.Database, ids []
 	return queues, nil
 }
 
-func SelectAllQueuesWithDeletedAtNotSet(ctx context.Context, db *mongo.Database) ([]Queue, error) {
+func SelectAllQueuesWithDeletedAtNotSet(ctx context.Context, db *mongo.Database) ([]*Queue, error) {
 	col := db.Collection(CollectionQueues)
 	cursor, err := col.Find(ctx, bson.M{
 		"deleted_at": bson.M{"$exists": false},
@@ -155,7 +155,7 @@ func SelectAllQueuesWithDeletedAtNotSet(ctx context.Context, db *mongo.Database)
 	if err != nil {
 		return nil, fmt.Errorf("failed to select all queues: %w", err)
 	}
-	queues := make([]Queue, 0)
+	queues := make([]*Queue, 0)
 	err = cursor.All(ctx, &queues)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode queues: %w", err)
@@ -291,6 +291,16 @@ func SelectTaskByIDIncludingDeleted(ctx context.Context, db *mongo.Database, id 
 	err := col.FindOne(ctx, bson.M{"_id": id}).Decode(&task)
 	if err != nil {
 		return nil, fmt.Errorf("failed to select task by ID: %w", err)
+	}
+	return &task, nil
+}
+
+func SelectTaskByNameIncludingDeleted(ctx context.Context, db *mongo.Database, name string) (*Task, error) {
+	col := db.Collection(CollectionTasks)
+	var task Task
+	err := col.FindOne(ctx, bson.M{"name": name}).Decode(&task)
+	if err != nil {
+		return nil, fmt.Errorf("failed to select task by name: %w", err)
 	}
 	return &task, nil
 }

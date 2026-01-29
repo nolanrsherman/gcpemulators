@@ -47,11 +47,6 @@ func NewServer(db *mongo.Database, logger *zap.Logger) *Server {
 	}
 }
 
-const (
-	CollectionQueues = "cloud_tasks_emulator_queues"
-	CollectionTasks  = "cloud_tasks_emulator_tasks"
-)
-
 type CloudTaskEmulator struct {
 	mongoDbURI           string
 	dbName               string
@@ -279,7 +274,7 @@ func (s *CloudTaskEmulator) runService(ctx context.Context) error {
 	return g.Wait()
 }
 
-func (s *CloudTaskEmulator) processQueue(ctx context.Context, queue db.Queue) error {
+func (s *CloudTaskEmulator) processQueue(ctx context.Context, queue *db.Queue) error {
 	// Create a cancellable context for this queue. This allows us to cleanly
 	// shut down all goroutines when the queue is deleted or the parent context
 	// is cancelled.
@@ -304,7 +299,7 @@ func (s *CloudTaskEmulator) processQueue(ctx context.Context, queue db.Queue) er
 			case <-time.After(10 * time.Second):
 				// get the queue from the database
 				newQueue := db.Queue{}
-				err := s.mongoDB.Collection(CollectionQueues).FindOne(queueCtx, bson.M{"_id": queue.Id}).Decode(&newQueue)
+				err := s.mongoDB.Collection(db.CollectionQueues).FindOne(queueCtx, bson.M{"_id": queue.Id}).Decode(&newQueue)
 				if err != nil {
 					s.logger.Error("failed to sync queue", zap.Error(err), zap.String("queue_name", queue.Name), zap.String("queue_id", queue.Id.Hex()))
 					queueLock.Lock()
@@ -313,7 +308,7 @@ func (s *CloudTaskEmulator) processQueue(ctx context.Context, queue db.Queue) er
 					syncQueueErr <- err
 				}
 				queueLock.Lock()
-				queue = newQueue
+				queue = &newQueue
 				queueLock.Unlock()
 			}
 		}
@@ -382,7 +377,7 @@ func (s *CloudTaskEmulator) processQueue(ctx context.Context, queue db.Queue) er
 
 var errNoTasksFound = errors.New("no tasks found for queue")
 
-func (s *CloudTaskEmulator) selectNextTask(ctx context.Context, eQ db.Queue) (*db.Task, error) {
+func (s *CloudTaskEmulator) selectNextTask(ctx context.Context, eQ *db.Queue) (*db.Task, error) {
 	task, err := db.SelectNextTaskAndLock(ctx, s.mongoDB, eQ.Id)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
@@ -395,7 +390,7 @@ func (s *CloudTaskEmulator) selectNextTask(ctx context.Context, eQ db.Queue) (*d
 
 // processTask processes a task by dispatching it to its target and updating its status.
 // It can be called from both CloudTaskEmulator and Server.
-func processTask(ctx context.Context, mongoDB *mongo.Database, logger *zap.Logger, eQ db.Queue, t *db.Task) error {
+func processTask(ctx context.Context, mongoDB *mongo.Database, logger *zap.Logger, eQ *db.Queue, t *db.Task) error {
 	logger.Debug("processing task", zap.String("queue_name", eQ.Name), zap.String("queue_id", eQ.Id.Hex()), zap.String("task_id", t.Name))
 
 	deliverTaskToTarget := func(ctx context.Context, t *db.Task) (status.Status, error) {
@@ -508,17 +503,19 @@ func processTask(ctx context.Context, mongoDB *mongo.Database, logger *zap.Logge
 		//       time we are dispatching or to track the latest attempt.
 		if t.FirstAttempt == nil {
 			updates["first_attempt"] = db.Task_Attempt{
-				ScheduleTime:   t.ScheduleTime,
-				DispatchTime:   &dispatchTime,
-				ResponseTime:   &responseTime,
-				ResponseStatus: &respStatus,
+				ScheduleTime:          t.ScheduleTime,
+				DispatchTime:          &dispatchTime,
+				ResponseTime:          &responseTime,
+				ResponseStatusCode:    respStatus.Code,
+				ResponseStatusMessage: respStatus.Message,
 			}
 		}
 		updates["last_attempt"] = db.Task_Attempt{
-			ScheduleTime:   t.ScheduleTime,
-			DispatchTime:   &dispatchTime,
-			ResponseTime:   &responseTime,
-			ResponseStatus: &respStatus,
+			ScheduleTime:          t.ScheduleTime,
+			DispatchTime:          &dispatchTime,
+			ResponseTime:          &responseTime,
+			ResponseStatusCode:    respStatus.Code,
+			ResponseStatusMessage: respStatus.Message,
 		}
 		//     - Clear LockExpiresAt to indicate the task is no longer leased.
 		updates["lock_expires_at"] = nil
@@ -537,32 +534,39 @@ func processTask(ctx context.Context, mongoDB *mongo.Database, logger *zap.Logge
 		//       time we are dispatching or to track the latest attempt.
 		if t.FirstAttempt == nil {
 			updates["first_attempt"] = db.Task_Attempt{
-				ScheduleTime:   t.ScheduleTime,
-				DispatchTime:   &dispatchTime,
-				ResponseTime:   &responseTime,
-				ResponseStatus: &respStatus,
+				ScheduleTime:          t.ScheduleTime,
+				DispatchTime:          &dispatchTime,
+				ResponseTime:          &responseTime,
+				ResponseStatusCode:    respStatus.Code,
+				ResponseStatusMessage: respStatus.Message,
 			}
 		}
 		updates["last_attempt"] = db.Task_Attempt{
-			ScheduleTime:   t.ScheduleTime,
-			DispatchTime:   &dispatchTime,
-			ResponseTime:   &responseTime,
-			ResponseStatus: &respStatus,
+			ScheduleTime:          t.ScheduleTime,
+			DispatchTime:          &dispatchTime,
+			ResponseTime:          &responseTime,
+			ResponseStatusCode:    respStatus.Code,
+			ResponseStatusMessage: respStatus.Message,
 		}
 
 		isStatusRetryable := false
 		switch respStatus.Code {
-		case int32(codes.Internal):
-		case int32(codes.Unavailable):
-		case int32(codes.DeadlineExceeded):
-		case int32(codes.ResourceExhausted):
+		case int32(codes.Internal),
+			int32(codes.Unavailable),
+			int32(codes.DeadlineExceeded),
+			int32(codes.ResourceExhausted):
 			isStatusRetryable = true
-		default:
 		}
 
 		retryDurationReached := false
-		if eQ.MaxRetryDuration != nil && t.FirstAttempt != nil && *eQ.MaxRetryDuration != 0 {
-			retryDurationReached = t.FirstAttempt.ScheduleTime.Add(*eQ.MaxRetryDuration).Before(time.Now())
+		if eQ.MaxRetryDuration != nil && *eQ.MaxRetryDuration != 0 {
+			var firstScheduleTime time.Time
+			if t.FirstAttempt != nil && t.FirstAttempt.ScheduleTime != nil {
+				firstScheduleTime = *t.FirstAttempt.ScheduleTime
+			} else if t.ScheduleTime != nil {
+				firstScheduleTime = *t.ScheduleTime
+			}
+			retryDurationReached = firstScheduleTime.Add(*eQ.MaxRetryDuration).Before(time.Now())
 		}
 		//     - If t.DispatchCount < eQ.MaxAttempts, compute a new RetryAfter based
 		//       on the queue's RetryConfig and set Status back to TaskStatusPending
@@ -592,7 +596,11 @@ func processTask(ctx context.Context, mongoDB *mongo.Database, logger *zap.Logge
 
 	//  6. Persist all task changes back to MongoDB (UpdateOne by _id), ensuring
 	//     we do not regress LockExpiresAt or Status in the presence of races.
-	mResult, err := mongoDB.Collection(CollectionTasks).UpdateOne(ctx, bson.M{"_id": t.Id}, updates)
+	mResult, err := mongoDB.Collection(db.CollectionTasks).UpdateOne(
+		ctx,
+		bson.M{"_id": t.Id},
+		bson.M{"$set": updates},
+	)
 	if err != nil {
 		return fmt.Errorf("failed to update task: %w", err)
 	}
@@ -604,7 +612,7 @@ func processTask(ctx context.Context, mongoDB *mongo.Database, logger *zap.Logge
 	return nil
 }
 
-func calculateNextRetryTime(eQ db.Queue, attemptCount int) time.Time {
+func calculateNextRetryTime(eQ *db.Queue, attemptCount int) time.Time {
 	// attemptCount is 1-based (first retry after the initial attempt is 1).
 	// We translate it into a zero-based retry index k for the backoff formula.
 	if attemptCount < 1 {

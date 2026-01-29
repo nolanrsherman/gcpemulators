@@ -264,6 +264,11 @@ const (
 	TaskStatusFailed    TaskStatus = 3
 )
 
+const (
+	MessageTypeHttpRequest          = "Task_HttpRequest"
+	MessageTypeAppEngineHttpRequest = "Task_AppEngineHttpRequest"
+)
+
 type Task struct {
 	Id        primitive.ObjectID `bson:"_id,omitempty" json:"_id,omitempty"`
 	CreatedAt time.Time          `bson:"created_at,omitempty" json:"created_at,omitempty"`
@@ -385,11 +390,14 @@ type Task_Attempt struct {
 	//
 	// `response_time` will be truncated to the nearest microsecond.
 	ResponseTime *time.Time `json:"response_time,omitempty"`
-	// Output only. The response from the worker for this attempt.
+	// Output only. The response status code from the worker for this attempt.
 	//
-	// If `response_time` is unset, then the task has not been attempted or is
-	// currently running and the `response_status` field is meaningless.
-	ResponseStatus *status.Status `json:"response_status,omitempty"`
+	// Mirrors the gRPC status code stored in cloudtaskspb.Attempt.ResponseStatus.Code.
+	ResponseStatusCode int32 `json:"response_status_code,omitempty"`
+	// Output only. The response status message from the worker for this attempt.
+	//
+	// Mirrors cloudtaskspb.Attempt.ResponseStatus.Message.
+	ResponseStatusMessage string `json:"response_status_message,omitempty"`
 }
 
 type Task_HttpRequest struct {
@@ -480,8 +488,12 @@ func (t *Task) ToCloudTasksTask(view cloudtaskspb.Task_View) *cloudtaskspb.Task 
 		if t.FirstAttempt.ResponseTime != nil {
 			firstAttempt.ResponseTime = timestamppb.New(*t.FirstAttempt.ResponseTime)
 		}
-		if t.FirstAttempt.ResponseStatus != nil {
-			firstAttempt.ResponseStatus = t.FirstAttempt.ResponseStatus
+		// Reconstruct ResponseStatus from stored code/message if present.
+		if t.FirstAttempt.ResponseStatusCode != 0 || t.FirstAttempt.ResponseStatusMessage != "" {
+			firstAttempt.ResponseStatus = &status.Status{
+				Code:    t.FirstAttempt.ResponseStatusCode,
+				Message: t.FirstAttempt.ResponseStatusMessage,
+			}
 		}
 	}
 
@@ -497,8 +509,12 @@ func (t *Task) ToCloudTasksTask(view cloudtaskspb.Task_View) *cloudtaskspb.Task 
 		if t.LastAttempt.ResponseTime != nil {
 			lastAttempt.ResponseTime = timestamppb.New(*t.LastAttempt.ResponseTime)
 		}
-		if t.LastAttempt.ResponseStatus != nil {
-			lastAttempt.ResponseStatus = t.LastAttempt.ResponseStatus
+		// Reconstruct ResponseStatus from stored code/message if present.
+		if t.LastAttempt.ResponseStatusCode != 0 || t.LastAttempt.ResponseStatusMessage != "" {
+			lastAttempt.ResponseStatus = &status.Status{
+				Code:    t.LastAttempt.ResponseStatusCode,
+				Message: t.LastAttempt.ResponseStatusMessage,
+			}
 		}
 	}
 

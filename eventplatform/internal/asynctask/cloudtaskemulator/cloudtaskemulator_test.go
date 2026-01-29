@@ -10,6 +10,7 @@ import (
 
 	cloudtasks "cloud.google.com/go/cloudtasks/apiv2"
 	"cloud.google.com/go/cloudtasks/apiv2/cloudtaskspb"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/nolanco/eventplatform/internal/asynctask/cloudtaskemulator/db"
 	"github.com/nolanco/eventplatform/internal/testcommon"
 	"github.com/stretchr/testify/require"
@@ -19,6 +20,7 @@ import (
 	"google.golang.org/api/option"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/testing/protocmp"
 )
 
 func WhenThereIsADatabase(t *testing.T) (*mongo.Database, func(t *testing.T)) {
@@ -160,7 +162,9 @@ func TestCloudTaskEmulator_RpcServer(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.NotNil(t, getResult.Name)
-		testcommon.ProtoEqual(t, createResult, getResult)
+		testcommon.MustBeIdentical(t, createResult, getResult,
+			protocmp.Transform(),
+			cmpopts.IgnoreUnexported(cloudtaskspb.Queue{}))
 	})
 
 	t.Run("should be able to add and then list queues", func(t *testing.T) {
@@ -198,7 +202,9 @@ func TestCloudTaskEmulator_RpcServer(t *testing.T) {
 			}
 		}
 		require.NotNil(t, foundQueue, "queue not found in list")
-		testcommon.ProtoEqual(t, createResult, foundQueue)
+		testcommon.MustBeIdentical(t, createResult, foundQueue,
+			protocmp.Transform(),
+			cmpopts.IgnoreUnexported(cloudtaskspb.Queue{}))
 	})
 
 }
