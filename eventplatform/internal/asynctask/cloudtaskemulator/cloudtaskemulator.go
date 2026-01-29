@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"regexp"
 	"strconv"
 	"sync"
 	"time"
@@ -48,7 +47,7 @@ type CloudTaskEmulator struct {
 	dbName               string
 	mongoDB              *mongo.Database
 	logger               *zap.Logger
-	port                 string
+	port                 int
 	managedQueueIds      map[primitive.ObjectID]struct{}
 	specialEventChannels specialEventChannels
 }
@@ -57,27 +56,14 @@ type specialEventChannels struct {
 	cloudTaskEmulatorReady chan struct{}
 }
 
-func NewCloudTaskEmulator(mongoDBURI, dbBane string, logger *zap.Logger, grpcPort string) *CloudTaskEmulator {
+func NewCloudTaskEmulator(mongoDBURI, dbBane string, logger *zap.Logger, grpcPort int) *CloudTaskEmulator {
 	// Validate that port is a numeric string
-	portValidator := regexp.MustCompile(`^[0-9]+$`)
-	if !portValidator.MatchString(grpcPort) {
-		panic(fmt.Sprintf("port must be a numeric string: %s", grpcPort))
-	}
-
-	// Validate that port is within valid range (1-65535)
-	portNum, err := strconv.Atoi(grpcPort)
-	if err != nil {
-		panic(fmt.Sprintf("port must be a valid number: %s", grpcPort))
-	}
-	if portNum < 1 || portNum > 65535 {
-		panic(fmt.Sprintf("port must be between 1 and 65535: %s", grpcPort))
-	}
 
 	return &CloudTaskEmulator{
 		mongoDbURI:      mongoDBURI,
 		dbName:          dbBane,
 		logger:          logger.Named("cloudtaskemulator"),
-		port:            ":" + grpcPort,
+		port:            grpcPort,
 		managedQueueIds: make(map[primitive.ObjectID]struct{}),
 		specialEventChannels: specialEventChannels{
 			cloudTaskEmulatorReady: make(chan struct{}, 1),
@@ -121,9 +107,9 @@ func (s *CloudTaskEmulator) Run(ctx context.Context) error {
 }
 
 func (s *CloudTaskEmulator) runGRPCServer(ctx context.Context) error {
-	lis, err := net.Listen("tcp", s.port)
+	lis, err := net.Listen("tcp", ":"+strconv.Itoa(s.port))
 	if err != nil {
-		return fmt.Errorf("failed to listen on %s: %w", s.port, err)
+		return fmt.Errorf("failed to listen on %d: %w", s.port, err)
 	}
 
 	grpcServer := grpc.NewServer(
@@ -137,7 +123,7 @@ func (s *CloudTaskEmulator) runGRPCServer(ctx context.Context) error {
 
 	// Start server in goroutine
 	go func() {
-		defer s.logger.Debug("goroutine stopped: grpcServer.Serve", zap.String("port", s.port))
+		defer s.logger.Debug("goroutine stopped: grpcServer.Serve", zap.Int("port", s.port))
 		err := grpcServer.Serve(lis)
 		// Always signal completion, even on normal shutdown
 		// grpc.ErrServerStopped is returned on normal shutdown, which is not an error
@@ -219,7 +205,7 @@ func (s *CloudTaskEmulator) runService(ctx context.Context) error {
 	// In a sub process we will keep querying for new queues every 10s and start a new routine for them too.
 	g.Go(func() error {
 		defer s.logger.Debug("goroutine stopped: newQueueDiscovery")
-		ticker := time.NewTicker(10 * time.Second)
+		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
 
 		for {
@@ -271,6 +257,7 @@ func (s *CloudTaskEmulator) runService(ctx context.Context) error {
 }
 
 func (s *CloudTaskEmulator) processQueue(ctx context.Context, queue *db.Queue) error {
+	s.logger.Debug("processing queue", zap.String("queue_id", queue.Id.Hex()), zap.String("queue_name", queue.Name))
 	// Create a cancellable context for this queue. This allows us to cleanly
 	// shut down all goroutines when the queue is deleted or the parent context
 	// is cancelled.
@@ -345,19 +332,19 @@ func (s *CloudTaskEmulator) processQueue(ctx context.Context, queue *db.Queue) e
 				continue
 			}
 
-			task, err := s.selectNextTask(queueCtx, queue)
+			task, err := db.SelectNextTaskAndLock(ctx, s.mongoDB, queue.Id)
 			if err != nil {
-				if errors.Is(err, errNoTasksFound) {
-					// no tasks found, wait a few seconds and try again
-					time.Sleep(backoffDuration)
-					// Exponential backoff with cap at maxBackoff
-					backoffDuration *= 2
-					if backoffDuration > maxBackoff {
-						backoffDuration = maxBackoff
-					}
-					continue
-				}
 				return fmt.Errorf("failed to select next task: %w", err)
+			}
+			if task == nil {
+				// no tasks found, wait a few seconds and try again
+				time.Sleep(backoffDuration)
+				// Exponential backoff with cap at maxBackoff
+				backoffDuration *= 2
+				if backoffDuration > maxBackoff {
+					backoffDuration = maxBackoff
+				}
+				continue
 			}
 			// Reset backoff after successfully finding a task
 			backoffDuration = 100 * time.Millisecond
@@ -369,17 +356,4 @@ func (s *CloudTaskEmulator) processQueue(ctx context.Context, queue *db.Queue) e
 		}
 
 	}
-}
-
-var errNoTasksFound = errors.New("no tasks found for queue")
-
-func (s *CloudTaskEmulator) selectNextTask(ctx context.Context, eQ *db.Queue) (*db.Task, error) {
-	task, err := db.SelectNextTaskAndLock(ctx, s.mongoDB, eQ.Id)
-	if err != nil {
-		if errors.Is(err, mongo.ErrNoDocuments) {
-			return nil, errNoTasksFound
-		}
-		return nil, fmt.Errorf("failed to select next task: %w", err)
-	}
-	return task, nil
 }

@@ -274,7 +274,7 @@ type Task struct {
 	CreatedAt time.Time          `bson:"created_at,omitempty" json:"created_at,omitempty"`
 	UpdatedAt time.Time          `bson:"updated_at,omitempty" json:"updated_at,omitempty"`
 	DeletedAt *time.Time         `bson:"deleted_at,omitempty" json:"deleted_at,omitempty"`
-	Status    TaskStatus         `bson:"status,omitempty" json:"status,omitempty"`
+	Status    TaskStatus         `bson:"status" json:"status"`
 	// QueueID is the ObjectID of the queue this task belongs to.
 	// Used for efficient querying and indexing.
 	QueueID primitive.ObjectID `bson:"queue_id,omitempty" json:"queue_id,omitempty"`
