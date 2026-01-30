@@ -96,7 +96,7 @@ func NewTestDatabase(ctx context.Context, t *testing.T, uri string) (*mongo.Data
 		t.Fatalf("failed to create mongo connection: %v", err)
 	}
 
-	dbName := fmt.Sprintf("test_%s", t.Name())
+	dbName := fmt.Sprintf("test_cloudtaskemulator_%s", t.Name())
 	dbName = strings.ReplaceAll(dbName, "/", "_")
 	if len(dbName) > 60 {
 		dbName = dbName[:60]

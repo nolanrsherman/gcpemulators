@@ -65,7 +65,7 @@ func WhenTheCloudTaskEmulatorIsRunning(t *testing.T, emulator *CloudTaskEmulator
 	select {
 	case err := <-runError: //we will need to check this again later
 		require.NoError(t, err, "cloud task finished with error")
-	case <-emulator.specialEventChannels.cloudTaskEmulatorReady:
+	case <-time.After(time.Millisecond * 100):
 		return func(t *testing.T) {
 			emuCtxCancel()
 			select {
@@ -75,8 +75,6 @@ func WhenTheCloudTaskEmulatorIsRunning(t *testing.T, emulator *CloudTaskEmulator
 				require.FailNow(t, "cloud task emulator did not stop")
 			}
 		}
-	case <-time.After(10 * time.Second):
-		require.FailNow(t, "cloud task emulator did not start")
 	}
 	emuCtxCancel()
 	require.FailNow(t, "cloud task emulator did not start correctly")

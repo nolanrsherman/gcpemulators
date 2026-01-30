@@ -43,17 +43,16 @@ func NewServer(db *mongo.Database, logger *zap.Logger) *Server {
 }
 
 type CloudTaskEmulator struct {
-	mongoDbURI           string
-	dbName               string
-	mongoDB              *mongo.Database
-	logger               *zap.Logger
-	port                 int
-	managedQueueIds      map[primitive.ObjectID]struct{}
-	specialEventChannels specialEventChannels
+	mongoDbURI      string
+	dbName          string
+	mongoDB         *mongo.Database
+	logger          *zap.Logger
+	port            int
+	managedQueueIds map[primitive.ObjectID]struct{}
 }
 
-type specialEventChannels struct {
-	cloudTaskEmulatorReady chan struct{}
+func (s *CloudTaskEmulator) Port() int {
+	return s.port
 }
 
 func NewCloudTaskEmulator(mongoDBURI, dbBane string, logger *zap.Logger, grpcPort int) *CloudTaskEmulator {
@@ -65,9 +64,6 @@ func NewCloudTaskEmulator(mongoDBURI, dbBane string, logger *zap.Logger, grpcPor
 		logger:          logger.Named("cloudtaskemulator"),
 		port:            grpcPort,
 		managedQueueIds: make(map[primitive.ObjectID]struct{}),
-		specialEventChannels: specialEventChannels{
-			cloudTaskEmulatorReady: make(chan struct{}, 1),
-		},
 	}
 }
 
@@ -102,7 +98,6 @@ func (s *CloudTaskEmulator) Run(ctx context.Context) error {
 
 	// Wait for all goroutines to complete
 	// Returns the first error from any goroutine, or nil if all complete successfully
-	s.specialEventChannels.cloudTaskEmulatorReady <- struct{}{}
 	return g.Wait()
 }
 
