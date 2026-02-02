@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nolanco/eventplatform/internal/asynctask/cloudtaskemulator/db"
+	"github.com/nolanrsherman/gcpemulators/cloudtaskemulator/db"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
