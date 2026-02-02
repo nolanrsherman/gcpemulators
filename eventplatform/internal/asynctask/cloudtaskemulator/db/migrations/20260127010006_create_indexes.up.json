@@ -1,0 +1,50 @@
+[
+  {
+    "createIndexes": "cloudtaskemulator_queues",
+    "indexes": [
+      {
+        "key": {
+          "name": 1
+        },
+        "name": "idx_queues_name_unique",
+        "unique": true
+      },
+      {
+        "key": {
+          "deleted_at": 1
+        },
+        "name": "idx_queues_deleted_at_ttl",
+        "expireAfterSeconds": 604800
+      }
+    ]
+  },
+  {
+    "createIndexes": "cloudtaskemulator_tasks",
+    "indexes": [
+      {
+        "key": {
+          "name": 1
+        },
+        "name": "idx_tasks_name_unique",
+        "unique": true
+      },
+      {
+        "key": {
+          "queue_id": 1,
+          "deleted_at": 1,
+          "status": 1,
+          "schedule_time": 1,
+          "lock_expires_at": 1
+        },
+        "name": "idx_tasks_schedule_and_lock_expires_at"
+      },
+      {
+        "key": {
+          "deleted_at": 1
+        },
+        "name": "idx_tasks_deleted_at_ttl",
+        "expireAfterSeconds": 6000
+      }
+    ]
+  }
+]
