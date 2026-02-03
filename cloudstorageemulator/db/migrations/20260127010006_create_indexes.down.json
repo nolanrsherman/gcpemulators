@@ -9,6 +9,10 @@
   },
   {
     "dropIndexes": "cloudstorageemulator_buckets",
+    "index": "idx_buckets_bucket_id_unique"
+  },
+  {
+    "dropIndexes": "cloudstorageemulator_buckets",
     "index": "idx_buckets_deleted_at_ttl"
   }
 ]

@@ -17,12 +17,12 @@ Under Construction  🚧    
 1. CreateNotification
 1. ListNotifications
 1. ComposeObject
-1. DeleteObject
-1. GetObject
-1. ReadObject
+1. DeleteObject ✅
+1. GetObject ✅
+1. ReadObject ✅
 1. UpdateObject
-1. WriteObject
-1. ListObjects
+1. WriteObject ✅
+1. ListObjects ✅
 1. RewriteObject
 1. StartResumableWrite
 1. QueryWriteStatus

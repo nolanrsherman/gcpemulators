@@ -2,8 +2,11 @@ package cloudstorageemulator
 
 import (
 	"context"
+	"crypto/md5"
 	"errors"
 	"fmt"
+	"hash/crc32"
+	"io"
 	"net"
 	"regexp"
 	"strconv"
@@ -14,7 +17,9 @@ import (
 	v1 "google.golang.org/genproto/googleapis/iam/v1"
 
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/gridfs"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.uber.org/zap"
 	"google.golang.org/genproto/googleapis/storage/v2"
@@ -357,17 +362,346 @@ func (e *CloudStorageEmulator) ComposeObject(ctx context.Context, in *storage.Co
 // is not enabled for the bucket, or if the `generation` parameter
 // is used.
 func (e *CloudStorageEmulator) DeleteObject(ctx context.Context, in *storage.DeleteObjectRequest) (*emptypb.Empty, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method DeleteObject not implemented")
+	// Validate request
+	if in == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "request is required")
+	}
+	if in.Bucket == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "bucket is required")
+	}
+	if in.Object == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "object name is required")
+	}
+
+	// Validate bucket exists
+	_, err := db.SelectBucketByID(ctx, e.mongodb, in.Bucket)
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return nil, status.Errorf(codes.NotFound, "bucket %s not found", in.Bucket)
+		}
+		return nil, status.Errorf(codes.Internal, "failed to get bucket: %v", err)
+	}
+
+	// Get object document to check preconditions and get GridFSFileID
+	var objDoc *db.ObjectDocument
+	if in.Generation != 0 {
+		// Get specific generation
+		objDoc, err = db.SelectObjectDocumentByBucketNameAndGeneration(ctx, e.mongodb, in.Bucket, in.Object, in.Generation)
+	} else {
+		// Get latest version
+		objDoc, err = db.SelectObjectDocumentByBucketAndName(ctx, e.mongodb, in.Bucket, in.Object)
+	}
+
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return nil, status.Errorf(codes.NotFound, "object %s not found in bucket %s", in.Object, in.Bucket)
+		}
+		return nil, status.Errorf(codes.Internal, "failed to get object: %v", err)
+	}
+
+	object := objDoc.Object
+
+	// Check generation match precondition
+	if in.IfGenerationMatch != nil {
+		if object.Generation != *in.IfGenerationMatch {
+			return nil, status.Errorf(codes.FailedPrecondition, "object generation %d does not match expected %d", object.Generation, *in.IfGenerationMatch)
+		}
+	}
+
+	// Check generation not match precondition
+	if in.IfGenerationNotMatch != nil {
+		if object.Generation == *in.IfGenerationNotMatch {
+			return nil, status.Errorf(codes.FailedPrecondition, "object generation %d matches the excluded value", object.Generation)
+		}
+	}
+
+	// Check metageneration match precondition
+	if in.IfMetagenerationMatch != nil {
+		if object.Metageneration != *in.IfMetagenerationMatch {
+			return nil, status.Errorf(codes.FailedPrecondition, "object metageneration %d does not match expected %d", object.Metageneration, *in.IfMetagenerationMatch)
+		}
+	}
+
+	// Check metageneration not match precondition
+	if in.IfMetagenerationNotMatch != nil {
+		if object.Metageneration == *in.IfMetagenerationNotMatch {
+			return nil, status.Errorf(codes.FailedPrecondition, "object metageneration %d matches the excluded value", object.Metageneration)
+		}
+	}
+
+	// Soft delete the object metadata
+	if in.Generation != 0 {
+		err = db.SoftDeleteObjectByBucketNameAndGeneration(ctx, e.mongodb, in.Bucket, in.Object, in.Generation)
+	} else {
+		err = db.SoftDeleteObjectByBucketAndName(ctx, e.mongodb, in.Bucket, in.Object)
+	}
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return nil, status.Errorf(codes.NotFound, "object %s not found in bucket %s", in.Object, in.Bucket)
+		}
+		return nil, status.Errorf(codes.Internal, "failed to delete object: %v", err)
+	}
+
+	// Delete the GridFS file
+	bucketOpts := options.GridFSBucket().SetName("cloudstorageemulator_objects")
+	gridFSBucket, err := gridfs.NewBucket(e.mongodb, bucketOpts)
+	if err != nil {
+		// Log error but don't fail - metadata is already deleted
+		e.logger.Warn("failed to create GridFS bucket for file deletion", zap.Error(err))
+	} else {
+		err = gridFSBucket.Delete(objDoc.GridFSFileID)
+		if err != nil {
+			// Log error but don't fail - metadata is already deleted
+			// GridFS file will be orphaned but that's acceptable for an emulator
+			e.logger.Warn("failed to delete GridFS file", zap.Error(err), zap.String("file_id", objDoc.GridFSFileID.Hex()))
+		}
+	}
+
+	return &emptypb.Empty{}, nil
 }
 
 // Retrieves an object's metadata.
 func (e *CloudStorageEmulator) GetObject(ctx context.Context, in *storage.GetObjectRequest) (*storage.Object, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetObject not implemented")
+	// Validate request
+	if in == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "request is required")
+	}
+	if in.Bucket == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "bucket is required")
+	}
+	if in.Object == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "object name is required")
+	}
+
+	// Validate bucket exists
+	_, err := db.SelectBucketByID(ctx, e.mongodb, in.Bucket)
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return nil, status.Errorf(codes.NotFound, "bucket %s not found", in.Bucket)
+		}
+		return nil, status.Errorf(codes.Internal, "failed to get bucket: %v", err)
+	}
+
+	var object *storage.Object
+
+	// If generation is specified, query by generation
+	if in.Generation != 0 {
+		object, err = db.SelectObjectByBucketNameAndGeneration(ctx, e.mongodb, in.Bucket, in.Object, in.Generation)
+	} else {
+		// Otherwise, get the latest version (for now, just get any matching object)
+		// TODO: Implement versioning to get the latest generation
+		object, err = db.SelectObjectByBucketAndName(ctx, e.mongodb, in.Bucket, in.Object)
+	}
+
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return nil, status.Errorf(codes.NotFound, "object %s not found in bucket %s", in.Object, in.Bucket)
+		}
+		return nil, status.Errorf(codes.Internal, "failed to get object: %v", err)
+	}
+
+	// Check generation match precondition if specified
+	if in.IfGenerationMatch != nil {
+		if object.Generation != *in.IfGenerationMatch {
+			return nil, status.Errorf(codes.FailedPrecondition, "object generation %d does not match expected %d", object.Generation, *in.IfGenerationMatch)
+		}
+	}
+
+	// Check generation not match precondition if specified
+	if in.IfGenerationNotMatch != nil {
+		if object.Generation == *in.IfGenerationNotMatch {
+			return nil, status.Errorf(codes.FailedPrecondition, "object generation %d matches the excluded value", object.Generation)
+		}
+	}
+
+	return object, nil
 }
 
 // Reads an object's data.
-func (e *CloudStorageEmulator) ReadObject(*storage.ReadObjectRequest, storage.Storage_ReadObjectServer) error {
-	return status.Errorf(codes.Unimplemented, "method ReadObject not implemented")
+func (e *CloudStorageEmulator) ReadObject(req *storage.ReadObjectRequest, server storage.Storage_ReadObjectServer) error {
+	ctx := server.Context()
+
+	// Validate request
+	if req == nil {
+		return status.Errorf(codes.InvalidArgument, "request is required")
+	}
+	if req.Bucket == "" {
+		return status.Errorf(codes.InvalidArgument, "bucket is required")
+	}
+	if req.Object == "" {
+		return status.Errorf(codes.InvalidArgument, "object name is required")
+	}
+
+	// Validate bucket exists
+	_, err := db.SelectBucketByID(ctx, e.mongodb, req.Bucket)
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return status.Errorf(codes.NotFound, "bucket %s not found", req.Bucket)
+		}
+		return status.Errorf(codes.Internal, "failed to get bucket: %v", err)
+	}
+
+	// Get object document (need GridFSFileID)
+	objDoc, err := db.SelectObjectDocumentByBucketAndName(ctx, e.mongodb, req.Bucket, req.Object)
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return status.Errorf(codes.NotFound, "object %s not found in bucket %s", req.Object, req.Bucket)
+		}
+		return status.Errorf(codes.Internal, "failed to get object: %v", err)
+	}
+
+	object := objDoc.Object
+
+	// Check generation preconditions if specified
+	if req.IfGenerationMatch != nil {
+		if object.Generation != *req.IfGenerationMatch {
+			return status.Errorf(codes.FailedPrecondition, "object generation %d does not match expected %d", object.Generation, *req.IfGenerationMatch)
+		}
+	}
+	if req.IfGenerationNotMatch != nil {
+		if object.Generation == *req.IfGenerationNotMatch {
+			return status.Errorf(codes.FailedPrecondition, "object generation %d matches the excluded value", object.Generation)
+		}
+	}
+
+	// Get GridFS bucket
+	bucketOpts := options.GridFSBucket().SetName("cloudstorageemulator_objects")
+	gridFSBucket, err := gridfs.NewBucket(e.mongodb, bucketOpts)
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to create GridFS bucket: %v", err)
+	}
+
+	// Open download stream
+	downloadStream, err := gridFSBucket.OpenDownloadStream(objDoc.GridFSFileID)
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to open GridFS download stream: %v", err)
+	}
+	defer downloadStream.Close()
+
+	// Handle read_offset
+	readOffset := req.ReadOffset
+	if readOffset < 0 {
+		// Negative offset means from the end
+		fileSize := object.Size
+		readOffset = fileSize + readOffset
+		if readOffset < 0 {
+			readOffset = 0
+		}
+	}
+
+	// Read and discard data up to the offset (GridFS doesn't support seeking)
+	if readOffset > 0 {
+		discardBuffer := make([]byte, 1024*1024) // 1MB buffer for discarding
+		discarded := int64(0)
+		for discarded < readOffset {
+			toDiscard := readOffset - discarded
+			if toDiscard > int64(len(discardBuffer)) {
+				toDiscard = int64(len(discardBuffer))
+			}
+			n, err := downloadStream.Read(discardBuffer[:toDiscard])
+			if err != nil && err != io.EOF {
+				return status.Errorf(codes.Internal, "failed to read to offset: %v", err)
+			}
+			if n == 0 {
+				break
+			}
+			discarded += int64(n)
+			if err == io.EOF {
+				break
+			}
+		}
+		if discarded < readOffset {
+			return status.Errorf(codes.InvalidArgument, "read_offset %d exceeds file size", readOffset)
+		}
+	}
+
+	// Calculate read limit
+	readLimit := req.ReadLimit
+	if readLimit < 0 {
+		return status.Errorf(codes.InvalidArgument, "read_limit cannot be negative")
+	}
+	if readLimit == 0 {
+		// No limit, read until end
+		readLimit = object.Size - readOffset
+		if readLimit < 0 {
+			readLimit = 0
+		}
+	}
+
+	// Calculate actual bytes to read
+	bytesToRead := readLimit
+	if readOffset+bytesToRead > object.Size {
+		bytesToRead = object.Size - readOffset
+		if bytesToRead < 0 {
+			bytesToRead = 0
+		}
+	}
+
+	// Prepare first response with metadata
+	firstResponse := &storage.ReadObjectResponse{
+		Metadata: object,
+	}
+
+	// Add ContentRange if offset or limit was specified
+	if req.ReadOffset != 0 || req.ReadLimit != 0 {
+		firstResponse.ContentRange = &storage.ContentRange{
+			Start:          readOffset,
+			End:            readOffset + bytesToRead - 1,
+			CompleteLength: object.Size,
+		}
+	}
+
+	// Add object checksums if available
+	if object.Checksums != nil {
+		firstResponse.ObjectChecksums = object.Checksums
+	}
+
+	// Send first response with metadata
+	err = server.Send(firstResponse)
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to send first response: %v", err)
+	}
+
+	// Stream data in chunks
+	chunkSize := int64(1024 * 1024) // 1MB chunks
+	bytesRead := int64(0)
+	buffer := make([]byte, chunkSize)
+
+	for bytesRead < bytesToRead {
+		// Calculate how much to read in this chunk
+		remaining := bytesToRead - bytesRead
+		toRead := chunkSize
+		if remaining < chunkSize {
+			toRead = remaining
+		}
+
+		n, err := downloadStream.Read(buffer[:toRead])
+		if err != nil && err != io.EOF {
+			return status.Errorf(codes.Internal, "failed to read from GridFS: %v", err)
+		}
+		if n == 0 {
+			break
+		}
+
+		// Send data chunk
+		response := &storage.ReadObjectResponse{
+			ChecksummedData: &storage.ChecksummedData{
+				Content: buffer[:n],
+			},
+		}
+
+		err = server.Send(response)
+		if err != nil {
+			return status.Errorf(codes.Internal, "failed to send data chunk: %v", err)
+		}
+
+		bytesRead += int64(n)
+		if err == io.EOF {
+			break
+		}
+	}
+
+	return nil
 }
 
 // Updates an object's metadata.
@@ -429,12 +763,405 @@ func (e *CloudStorageEmulator) UpdateObject(ctx context.Context, in *storage.Upd
 // status, with a WriteObjectResponse containing the finalized object's
 // metadata.
 func (e *CloudStorageEmulator) WriteObject(server storage.Storage_WriteObjectServer) error {
-	return status.Errorf(codes.Unimplemented, "method WriteObject not implemented")
+	ctx := server.Context()
+
+	// Receive first message to determine if this is resumable or non-resumable
+	firstReq, err := server.Recv()
+	if err != nil {
+		if err == io.EOF {
+			return status.Errorf(codes.InvalidArgument, "no data received")
+		}
+		return status.Errorf(codes.Internal, "failed to receive first message: %v", err)
+	}
+
+	var uploadID string
+	var spec *storage.WriteObjectSpec
+	var bucketName, objectName string
+
+	// Determine if this is a resumable or non-resumable write
+	switch msg := firstReq.FirstMessage.(type) {
+	case *storage.WriteObjectRequest_UploadId:
+		uploadID = msg.UploadId
+		// Load upload metadata to get bucket and object name
+		upload, err := db.SelectUploadByID(ctx, e.mongodb, uploadID)
+		if err != nil {
+			if errors.Is(err, mongo.ErrNoDocuments) {
+				return status.Errorf(codes.NotFound, "upload_id not found: %s", uploadID)
+			}
+			return status.Errorf(codes.Internal, "failed to get upload: %v", err)
+		}
+		bucketName = upload.Bucket
+		objectName = upload.ObjectName
+		spec = upload.Spec
+	case *storage.WriteObjectRequest_WriteObjectSpec:
+		spec = msg.WriteObjectSpec
+		if spec == nil || spec.Resource == nil {
+			return status.Errorf(codes.InvalidArgument, "WriteObjectSpec is required for non-resumable writes")
+		}
+		bucketName = spec.Resource.Bucket
+		objectName = spec.Resource.Name
+		if bucketName == "" || objectName == "" {
+			return status.Errorf(codes.InvalidArgument, "bucket and object name are required")
+		}
+		// Create upload for tracking
+		uploadID, err = db.InsertUpload(ctx, e.mongodb, bucketName, objectName, spec)
+		if err != nil {
+			return status.Errorf(codes.Internal, "failed to create upload: %v", err)
+		}
+	default:
+		return status.Errorf(codes.InvalidArgument, "first message must contain either upload_id or write_object_spec")
+	}
+
+	// Validate bucket exists
+	_, err = db.SelectBucketByID(ctx, e.mongodb, bucketName)
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return status.Errorf(codes.NotFound, "bucket %s not found", bucketName)
+		}
+		return status.Errorf(codes.Internal, "failed to get bucket: %v", err)
+	}
+
+	// Get or create GridFS bucket
+	bucketOpts := options.GridFSBucket().SetName("cloudstorageemulator_objects")
+	gridFSBucket, err := gridfs.NewBucket(e.mongodb, bucketOpts)
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to create GridFS bucket: %v", err)
+	}
+
+	// Determine write offset
+	writeOffset := firstReq.WriteOffset
+	if writeOffset < 0 {
+		return status.Errorf(codes.InvalidArgument, "write_offset must be non-negative")
+	}
+
+	// Get current upload state
+	upload, err := db.SelectUploadByID(ctx, e.mongodb, uploadID)
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to get upload state: %v", err)
+	}
+
+	// For resumable writes, validate offset matches persisted size
+	if writeOffset > 0 && writeOffset != upload.PersistedSize {
+		return status.Errorf(codes.InvalidArgument, "write_offset %d does not match persisted_size %d", writeOffset, upload.PersistedSize)
+	}
+
+	// Prepare GridFS upload stream
+	var uploadStream *gridfs.UploadStream
+	var fileID primitive.ObjectID
+	filename := fmt.Sprintf("%s/%s", bucketName, objectName)
+
+	if writeOffset == 0 {
+		// Starting fresh - create new upload stream
+		uploadStream, err = gridFSBucket.OpenUploadStream(filename)
+		if err != nil {
+			return status.Errorf(codes.Internal, "failed to open GridFS upload stream: %v", err)
+		}
+		fileID, ok := uploadStream.FileID.(primitive.ObjectID)
+		if !ok {
+			uploadStream.Close()
+			return status.Errorf(codes.Internal, "failed to convert FileID to ObjectID")
+		}
+		upload.GridFSFileID = fileID
+		err = db.UpdateUploadFileID(ctx, e.mongodb, uploadID, fileID)
+		if err != nil {
+			uploadStream.Close()
+			return status.Errorf(codes.Internal, "failed to update upload file ID: %v", err)
+		}
+	} else {
+		// Resume existing upload - open stream with existing file ID
+		fileID = upload.GridFSFileID
+		if fileID.IsZero() {
+			return status.Errorf(codes.InvalidArgument, "cannot resume upload without file ID")
+		}
+		uploadStream, err = gridFSBucket.OpenUploadStreamWithID(fileID, filename)
+		if err != nil {
+			return status.Errorf(codes.Internal, "failed to resume GridFS upload: %v", err)
+		}
+		// For resumable uploads, we need to read existing data to validate checksums
+		// Note: GridFS doesn't support seeking, so we read the existing file
+		downloadStream, err := gridFSBucket.OpenDownloadStream(fileID)
+		if err == nil {
+			existingData := make([]byte, writeOffset)
+			_, err = downloadStream.Read(existingData)
+			downloadStream.Close()
+			if err != nil && err != io.EOF {
+				uploadStream.Close()
+				return status.Errorf(codes.Internal, "failed to read existing file data: %v", err)
+			}
+		}
+	}
+
+	defer uploadStream.Close()
+
+	// Process data chunks and write to GridFS
+	var totalWritten int64 = writeOffset
+	var allData []byte
+	var finished bool
+	var expectedCrc32c *uint32
+	var expectedMd5Hash []byte
+	hasFirstMessage := true
+
+	// Load existing data if resuming (for checksum validation)
+	if writeOffset > 0 {
+		downloadStream, err := gridFSBucket.OpenDownloadStream(fileID)
+		if err == nil {
+			existingData := make([]byte, writeOffset)
+			_, err = downloadStream.Read(existingData)
+			downloadStream.Close()
+			if err != nil && err != io.EOF {
+				return status.Errorf(codes.Internal, "failed to read existing file data: %v", err)
+			}
+			allData = existingData
+		}
+	}
+
+	// Process data chunks
+	for {
+		var req *storage.WriteObjectRequest
+		if hasFirstMessage {
+			req = firstReq
+			hasFirstMessage = false
+		} else {
+			var recvErr error
+			req, recvErr = server.Recv()
+			if recvErr == io.EOF {
+				break
+			}
+			if recvErr != nil {
+				return status.Errorf(codes.Internal, "failed to receive message: %v", recvErr)
+			}
+		}
+
+		// Validate write offset
+		if req.WriteOffset != totalWritten {
+			return status.Errorf(codes.InvalidArgument, "write_offset mismatch: expected %d, got %d", totalWritten, req.WriteOffset)
+		}
+
+		// Process data chunk
+		if checksummedData := req.GetChecksummedData(); checksummedData != nil {
+			data := checksummedData.Content
+
+			// Validate CRC32C if provided
+			if checksummedData.Crc32C != nil {
+				calculated := crc32.ChecksumIEEE(data)
+				if calculated != *checksummedData.Crc32C {
+					return status.Errorf(codes.InvalidArgument, "CRC32C checksum mismatch")
+				}
+			}
+
+			// Write to GridFS stream
+			n, err := uploadStream.Write(data)
+			if err != nil {
+				return status.Errorf(codes.Internal, "failed to write to GridFS: %v", err)
+			}
+			totalWritten += int64(n)
+			allData = append(allData, data...)
+		}
+
+		// Check for object-level checksums (only in first or last message)
+		if req.ObjectChecksums != nil {
+			if req.ObjectChecksums.Crc32C != nil {
+				expectedCrc32c = req.ObjectChecksums.Crc32C
+			}
+			if len(req.ObjectChecksums.Md5Hash) > 0 {
+				expectedMd5Hash = req.ObjectChecksums.Md5Hash
+			}
+		}
+
+		// Check if write is finished
+		if req.FinishWrite {
+			finished = true
+			break
+		}
+	}
+
+	// Update persisted size
+	err = db.UpdateUploadPersistedSize(ctx, e.mongodb, uploadID, totalWritten)
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to update persisted size: %v", err)
+	}
+
+	// If not finished, return persisted size
+	if !finished {
+		return server.SendAndClose(&storage.WriteObjectResponse{
+			WriteStatus: &storage.WriteObjectResponse_PersistedSize{
+				PersistedSize: totalWritten,
+			},
+		})
+	}
+
+	// Close the upload stream to finalize the file
+	err = uploadStream.Close()
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to close GridFS upload stream: %v", err)
+	}
+
+	// Validate final checksums if provided
+	if expectedCrc32c != nil {
+		calculated := crc32.ChecksumIEEE(allData)
+		if calculated != *expectedCrc32c {
+			return status.Errorf(codes.InvalidArgument, "object CRC32C checksum mismatch")
+		}
+	}
+	if len(expectedMd5Hash) > 0 {
+		hash := md5.Sum(allData)
+		if string(hash[:]) != string(expectedMd5Hash) {
+			return status.Errorf(codes.InvalidArgument, "object MD5 checksum mismatch")
+		}
+	}
+
+	// Create object metadata
+	now := time.Now()
+	object := &storage.Object{
+		Name:           objectName,
+		Bucket:         bucketName,
+		Size:           totalWritten,
+		Generation:     time.Now().UnixNano(), // Simple generation based on timestamp
+		Metageneration: 1,
+		CreateTime:     timestamppb.New(now),
+		UpdateTime:     timestamppb.New(now),
+		ContentType:    spec.Resource.ContentType,
+	}
+
+	// Set checksums in object
+	if expectedCrc32c != nil {
+		object.Checksums = &storage.ObjectChecksums{
+			Crc32C: expectedCrc32c,
+		}
+	}
+	if len(expectedMd5Hash) > 0 {
+		if object.Checksums == nil {
+			object.Checksums = &storage.ObjectChecksums{}
+		}
+		object.Checksums.Md5Hash = expectedMd5Hash
+	}
+
+	// Store object metadata
+	err = db.InsertObject(ctx, e.mongodb, object, upload.GridFSFileID)
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to store object metadata: %v", err)
+	}
+
+	// Mark upload as completed
+	err = db.CompleteUpload(ctx, e.mongodb, uploadID)
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to complete upload: %v", err)
+	}
+
+	// Return final object
+	return server.SendAndClose(&storage.WriteObjectResponse{
+		WriteStatus: &storage.WriteObjectResponse_Resource{
+			Resource: object,
+		},
+	})
 }
 
 // Retrieves a list of objects matching the criteria.
 func (e *CloudStorageEmulator) ListObjects(ctx context.Context, in *storage.ListObjectsRequest) (*storage.ListObjectsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ListObjects not implemented")
+	// Validate parent (required)
+	parent := in.GetParent()
+	if parent == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "parent is required")
+	}
+
+	// Extract bucket ID from parent
+	// Parent can be either:
+	// 1. Just the bucket ID (e.g., "my-bucket")
+	// 2. Full resource name (e.g., "projects/PROJECT_ID/buckets/BUCKET_ID")
+	bucketID := parent
+	if strings.HasPrefix(parent, "projects/") {
+		// Extract bucket ID from full resource name
+		parts := strings.Split(parent, "/")
+		if len(parts) >= 4 && parts[2] == "buckets" {
+			bucketID = parts[3]
+		} else {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid parent format: %s", parent)
+		}
+	}
+
+	// Validate bucket exists
+	_, err := db.SelectBucketByID(ctx, e.mongodb, bucketID)
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return nil, status.Errorf(codes.NotFound, "bucket %s not found", bucketID)
+		}
+		return nil, status.Errorf(codes.Internal, "failed to get bucket: %v", err)
+	}
+
+	// Determine page size (clamp to maximum of 1000 per GCS API)
+	pageSize := in.GetPageSize()
+	if pageSize <= 0 {
+		pageSize = 1000 // Default to maximum per GCS API
+	}
+	if pageSize > 1000 {
+		pageSize = 1000
+	}
+
+	// Decode page token as an integer offset
+	var offset int64
+	if token := strings.TrimSpace(in.GetPageToken()); token != "" {
+		n, err := strconv.Atoi(token)
+		if err != nil || n < 0 {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid page_token")
+		}
+		offset = int64(n)
+	}
+
+	col := e.mongodb.Collection(db.CollectionObjects)
+
+	// Build filter: match bucket and exclude soft-deleted objects
+	filter := bson.M{
+		"object.bucket": bucketID,
+		"deleted_at":    bson.M{"$exists": false},
+	}
+
+	// Add prefix filter if provided
+	prefix := strings.TrimSpace(in.GetPrefix())
+	if prefix != "" {
+		// Filter objects whose names begin with the prefix (case-sensitive)
+		filter["object.name"] = bson.M{
+			"$regex": "^" + regexp.QuoteMeta(prefix),
+		}
+	}
+
+	// Fetch one extra document to determine if there is a next page
+	limit := int64(pageSize) + 1
+	opts := options.Find().
+		SetSort(bson.D{{Key: "object.name", Value: 1}}). // Sort by object name
+		SetSkip(offset).
+		SetLimit(limit)
+
+	cursor, err := col.Find(ctx, filter, opts)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to list objects: %v", err)
+	}
+	defer cursor.Close(ctx)
+
+	var dbObjects []db.ObjectDocument
+	if err := cursor.All(ctx, &dbObjects); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to decode objects: %v", err)
+	}
+
+	hasMore := int32(len(dbObjects)) > pageSize
+	if hasMore {
+		dbObjects = dbObjects[:pageSize]
+	}
+
+	res := &storage.ListObjectsResponse{
+		Objects:       make([]*storage.Object, 0, len(dbObjects)),
+		Prefixes:      []string{}, // Empty since we're not implementing delimiter
+		NextPageToken: "",
+	}
+
+	for _, doc := range dbObjects {
+		res.Objects = append(res.Objects, doc.Object)
+	}
+
+	if hasMore {
+		res.NextPageToken = strconv.Itoa(int(offset) + len(res.Objects))
+	}
+
+	return res, nil
 }
 
 // Rewrites a source object to a destination object. Optionally overrides

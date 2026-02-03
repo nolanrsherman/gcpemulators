@@ -23,12 +23,12 @@ Since this project is new, there is not an established structure here yet. Just 
 | bigquery     | planned      |    0     | TBD          | TBD          |
 | bigtable     | planned      |    0     | TBD          | TBD          |
 | cloudsqlconn | planned      |    0     | TBD          | TBD          |
-| cloudtasks   | in progress  |  13/16   | TBD          | TBD          |
+| cloudtasks   | in progress  |  13/16   |  ✅          | TBD          |
 | filestore    | planned      |    0     | TBD          | TBD          |
 | firestore    | planned      |    0     | TBD          | TBD          |
 | functions    | planned      |    0     | TBD          | TBD          |
 | pubsub       | planned      |    0     | TBD          | TBD          |
 | scheduler    | planned      |    0     | TBD          | TBD          |
 | secretmanager| planned      |    0     | TBD          | TBD          |
-| storage      | in progress  |   4/29   | TBD          | TBD          |
+| storage      | in progress  |   9/29   |  ✅          | TBD          |
 | workflows    | planned      |    0     | TBD          | TBD          |

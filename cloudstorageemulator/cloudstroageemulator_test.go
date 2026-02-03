@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
 	"testing"
@@ -16,7 +17,9 @@ import (
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/genproto/googleapis/storage/v2"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -258,4 +261,142 @@ func TestCloudStorageEmulatorBucket(t *testing.T) {
 		require.Len(t, actualBuckets.Buckets, 1)
 		require.Contains(t, actualBuckets.Buckets[0].Name, bucketB.Name)
 	})
+}
+
+func TestCloudStorageEmulatorObject(t *testing.T) {
+	emulator, stopEmulator := WhenTheCloudStorageEmulatorIsRunning(t)
+	defer stopEmulator(t)
+
+	storageClient, closeConn := WhenThereIsAGrpcStorageClient(t, emulator.port)
+	defer closeConn(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	projectID := "test-project"
+	bucketBId := "test-bucket"
+	bucketA, err := storageClient.CreateBucket(ctx, &storage.CreateBucketRequest{
+		Parent:   "projects/" + projectID,
+		BucketId: bucketBId,
+		Bucket:   &storage.Bucket{},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, bucketA)
+
+	t.Run("should be able to upload an object with non-resumable write", func(t *testing.T) {
+		objectName := "non-resumable-test-object"
+		testData := []byte("test-data")
+
+		writeClient, err := storageClient.WriteObject(ctx)
+		require.NoError(t, err)
+
+		// First message: WriteObjectSpec with object metadata
+		err = writeClient.Send(&storage.WriteObjectRequest{
+			FirstMessage: &storage.WriteObjectRequest_WriteObjectSpec{
+				WriteObjectSpec: &storage.WriteObjectSpec{
+					Resource: &storage.Object{
+						Bucket: bucketA.BucketId,
+						Name:   objectName,
+					},
+				},
+			},
+			WriteOffset: 0,
+			Data: &storage.WriteObjectRequest_ChecksummedData{
+				ChecksummedData: &storage.ChecksummedData{
+					Content: testData,
+				},
+			},
+			FinishWrite: true,
+		})
+		require.NoError(t, err)
+
+		// Close and receive response
+		response, err := writeClient.CloseAndRecv()
+		require.NoError(t, err)
+		require.NotNil(t, response)
+
+		// Verify response contains the object
+		resource := response.GetResource()
+		require.NotNil(t, resource)
+		require.Equal(t, objectName, resource.Name)
+		require.Equal(t, bucketA.BucketId, resource.Bucket)
+		require.Equal(t, int64(len(testData)), resource.Size)
+		require.NotZero(t, resource.Generation)
+		require.NotNil(t, resource.CreateTime)
+		require.NotNil(t, resource.UpdateTime)
+
+		t.Run("should be able to get an object that was uploaded with non-resumable write", func(t *testing.T) {
+
+			object, err := storageClient.GetObject(ctx, &storage.GetObjectRequest{
+				Bucket: bucketA.BucketId,
+				Object: objectName,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, object)
+			require.Equal(t, objectName, object.Name)
+			require.Equal(t, bucketA.BucketId, object.Bucket)
+		})
+
+		t.Run("should be able to read an object that was uploaded with non-resumable write", func(t *testing.T) {
+			readClient, err := storageClient.ReadObject(ctx, &storage.ReadObjectRequest{
+				Bucket: bucketA.BucketId,
+				Object: objectName,
+			})
+			require.NoError(t, err)
+			data := make([]byte, 0, len(testData))
+			for {
+				resp, err := readClient.Recv()
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				require.NoError(t, err)
+				require.NotNil(t, resp)
+
+				// Append data from ChecksummedData if present
+				if resp.ChecksummedData != nil && len(resp.ChecksummedData.Content) > 0 {
+					data = append(data, resp.ChecksummedData.Content...)
+				}
+			}
+			require.Equal(t, testData, data)
+		})
+
+		t.Run("should be able to list objects created with non-resumable write", func(t *testing.T) {
+			objects, err := storageClient.ListObjects(ctx, &storage.ListObjectsRequest{
+				Parent: bucketA.Name,
+				Prefix: objectName,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, objects)
+			require.Len(t, objects.Objects, 1)
+			require.Equal(t, objectName, objects.Objects[0].Name)
+			require.Equal(t, bucketA.BucketId, objects.Objects[0].Bucket)
+		})
+
+		t.Run("should be able to delete an object that was uploaded with non-resumable write", func(t *testing.T) {
+
+			_, err := storageClient.DeleteObject(ctx, &storage.DeleteObjectRequest{
+				Bucket: bucketA.BucketId,
+				Object: objectName,
+			})
+			require.NoError(t, err)
+
+			objects, err := storageClient.ListObjects(ctx, &storage.ListObjectsRequest{
+				Parent: bucketA.Name,
+				Prefix: objectName,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, objects)
+			require.Len(t, objects.Objects, 0)
+
+			_, err = storageClient.GetObject(ctx, &storage.GetObjectRequest{
+				Bucket: bucketA.BucketId,
+				Object: objectName,
+			})
+			require.Error(t, err)
+			st, ok := status.FromError(err)
+			require.True(t, ok)
+			require.Equal(t, codes.NotFound, st.Code())
+		})
+	})
+
 }
