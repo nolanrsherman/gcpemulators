@@ -30,5 +30,5 @@ Since this project is new, there is not an established structure here yet. Just 
 | pubsub       | planned      |    0     | TBD          | TBD          |
 | scheduler    | planned      |    0     | TBD          | TBD          |
 | secretmanager| planned      |    0     | TBD          | TBD          |
-| storage      | in progress  |   0/29   | TBD          | TBD          |
+| storage      | in progress  |   4/29   | TBD          | TBD          |
 | workflows    | planned      |    0     | TBD          | TBD          |

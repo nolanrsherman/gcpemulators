@@ -1,0 +1,14 @@
+[
+  {
+    "dropIndexes": "cloudstorageemulator_buckets",
+    "index": "idx_buckets_name_unique"
+  },
+  {
+    "dropIndexes": "cloudstorageemulator_buckets",
+    "index": "idx_buckets_project_deleted_at_name"
+  },
+  {
+    "dropIndexes": "cloudstorageemulator_buckets",
+    "index": "idx_buckets_deleted_at_ttl"
+  }
+]

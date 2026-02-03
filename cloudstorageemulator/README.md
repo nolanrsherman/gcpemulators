@@ -3,10 +3,10 @@
 Under Construction  🚧    
 
 ## Functions
-1. DeleteBucket
-1. GetBucket
-1. CreateBucket
-1. ListBuckets
+1. DeleteBucket ✅
+1. GetBucket ✅
+1. CreateBucket ✅
+1. ListBuckets ✅
 1. LockBucketRetentionPolicy
 1. GetIamPolicy
 1. SetIamPolicy

@@ -1,0 +1,29 @@
+[
+  {
+    "createIndexes": "cloudstorageemulator_buckets",
+    "indexes": [
+      {
+        "key": {
+          "bucket.name": 1
+        },
+        "name": "idx_buckets_name_unique",
+        "unique": true
+      },
+      {
+        "key": {
+          "bucket.project": 1,
+          "deleted_at": 1,
+          "bucket.name": 1
+        },
+        "name": "idx_buckets_project_deleted_at_name"
+      },
+      {
+        "key": {
+          "deleted_at": 1
+        },
+        "name": "idx_buckets_deleted_at_ttl",
+        "expireAfterSeconds": 604800
+      }
+    ]
+  }
+]
