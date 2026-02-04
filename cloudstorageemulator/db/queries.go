@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"time"
 
+	storage "github.com/nolanrsherman/gcpemulators/cloudstorageemulator/storagepb"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/gridfs"
-	"google.golang.org/genproto/googleapis/storage/v2"
 )
 
 const (

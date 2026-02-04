@@ -13,7 +13,9 @@ import (
 	"strings"
 	"time"
 
+	grpc_zap "github.com/grpc-ecosystem/go-grpc-middleware/logging/zap"
 	"github.com/nolanrsherman/gcpemulators/cloudstorageemulator/db"
+	storage "github.com/nolanrsherman/gcpemulators/cloudstorageemulator/storagepb"
 	v1 "google.golang.org/genproto/googleapis/iam/v1"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -22,7 +24,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/gridfs"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.uber.org/zap"
-	"google.golang.org/genproto/googleapis/storage/v2"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -30,6 +31,9 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+// crc32cTable uses the Castagnoli polynomial, which matches GCS CRC32C
+var crc32cTable = crc32.MakeTable(crc32.Castagnoli)
 
 // storedObject holds both the object metadata and its data content
 type storedObject struct {
@@ -64,6 +68,12 @@ func (e *CloudStorageEmulator) Start(ctx context.Context) error {
 
 	grpcServer := grpc.NewServer(
 		grpc.Creds(insecure.NewCredentials()),
+		grpc.ChainUnaryInterceptor(
+			grpc_zap.UnaryServerInterceptor(e.logger),
+		),
+		grpc.ChainStreamInterceptor(
+			grpc_zap.StreamServerInterceptor(e.logger),
+		),
 	)
 	defer grpcServer.GracefulStop()
 
@@ -165,9 +175,6 @@ func (e *CloudStorageEmulator) CreateBucket(ctx context.Context, in *storage.Cre
 	// Populating those fields inside bucket is an error.
 	if in.Bucket.GetName() != "" {
 		return nil, status.Error(codes.InvalidArgument, "bucket.name must not be set; use parent and bucket_id")
-	}
-	if in.Bucket.GetProject() != "" {
-		return nil, status.Error(codes.InvalidArgument, "bucket.project must not be set; use parent")
 	}
 
 	// Build the canonical bucket resource name and validate it.
@@ -329,29 +336,6 @@ func (e *CloudStorageEmulator) UpdateBucket(ctx context.Context, in *storage.Upd
 	return nil, status.Errorf(codes.Unimplemented, "method UpdateBucket not implemented")
 }
 
-// Permanently deletes a notification subscription.
-func (e *CloudStorageEmulator) DeleteNotification(ctx context.Context, in *storage.DeleteNotificationRequest) (*emptypb.Empty, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method DeleteNotification not implemented")
-}
-
-// View a notification config.
-func (e *CloudStorageEmulator) GetNotification(ctx context.Context, in *storage.GetNotificationRequest) (*storage.Notification, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetNotification not implemented")
-}
-
-// Creates a notification subscription for a given bucket.
-// These notifications, when triggered, publish messages to the specified
-// Pub/Sub topics.
-// See https://cloud.google.com/storage/docs/pubsub-notifications.
-func (e *CloudStorageEmulator) CreateNotification(ctx context.Context, in *storage.CreateNotificationRequest) (*storage.Notification, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method CreateNotification not implemented")
-}
-
-// Retrieves a list of notification subscriptions for a given bucket.
-func (e *CloudStorageEmulator) ListNotifications(ctx context.Context, in *storage.ListNotificationsRequest) (*storage.ListNotificationsResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ListNotifications not implemented")
-}
-
 // Concatenates a list of existing objects into a new object in the same
 // bucket.
 func (e *CloudStorageEmulator) ComposeObject(ctx context.Context, in *storage.ComposeObjectRequest) (*storage.Object, error) {
@@ -474,7 +458,7 @@ func (e *CloudStorageEmulator) GetObject(ctx context.Context, in *storage.GetObj
 	}
 
 	// Validate bucket exists
-	_, err := db.SelectBucketByID(ctx, e.mongodb, in.Bucket)
+	_, err := db.SelectBucketByName(ctx, e.mongodb, in.Bucket)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			return nil, status.Errorf(codes.NotFound, "bucket %s not found", in.Bucket)
@@ -533,7 +517,7 @@ func (e *CloudStorageEmulator) ReadObject(req *storage.ReadObjectRequest, server
 	}
 
 	// Validate bucket exists
-	_, err := db.SelectBucketByID(ctx, e.mongodb, req.Bucket)
+	_, err := db.SelectBucketByName(ctx, e.mongodb, req.Bucket)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			return status.Errorf(codes.NotFound, "bucket %s not found", req.Bucket)
@@ -941,9 +925,9 @@ func (e *CloudStorageEmulator) WriteObject(server storage.Storage_WriteObjectSer
 		if checksummedData := req.GetChecksummedData(); checksummedData != nil {
 			data := checksummedData.Content
 
-			// Validate CRC32C if provided
+			// Validate CRC32C if provided (GCS uses CRC32C Castagnoli)
 			if checksummedData.Crc32C != nil {
-				calculated := crc32.ChecksumIEEE(data)
+				calculated := crc32.Checksum(data, crc32cTable)
 				if calculated != *checksummedData.Crc32C {
 					return status.Errorf(codes.InvalidArgument, "CRC32C checksum mismatch")
 				}
@@ -998,7 +982,7 @@ func (e *CloudStorageEmulator) WriteObject(server storage.Storage_WriteObjectSer
 
 	// Validate final checksums if provided
 	if expectedCrc32c != nil {
-		calculated := crc32.ChecksumIEEE(allData)
+		calculated := crc32.Checksum(allData, crc32cTable)
 		if calculated != *expectedCrc32c {
 			return status.Errorf(codes.InvalidArgument, "object CRC32C checksum mismatch")
 		}
@@ -1194,38 +1178,317 @@ func (e *CloudStorageEmulator) QueryWriteStatus(ctx context.Context, in *storage
 	return nil, status.Errorf(codes.Unimplemented, "method QueryWriteStatus not implemented")
 }
 
-// Retrieves the name of a project's Google Cloud Storage service account.
-func (e *CloudStorageEmulator) GetServiceAccount(ctx context.Context, in *storage.GetServiceAccountRequest) (*storage.ServiceAccount, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetServiceAccount not implemented")
+func (e *CloudStorageEmulator) RestoreObject(context.Context, *storage.RestoreObjectRequest) (*storage.Object, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RestoreObject not implemented")
+}
+func (e *CloudStorageEmulator) CancelResumableWrite(context.Context, *storage.CancelResumableWriteRequest) (*storage.CancelResumableWriteResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CancelResumableWrite not implemented")
 }
 
-// Creates a new HMAC key for the given service account.
-func (e *CloudStorageEmulator) CreateHmacKey(ctx context.Context, in *storage.CreateHmacKeyRequest) (*storage.CreateHmacKeyResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method CreateHmacKey not implemented")
+func (e *CloudStorageEmulator) BidiReadObject(storage.Storage_BidiReadObjectServer) error {
+	return status.Errorf(codes.Unimplemented, "method BidiReadObject not implemented")
 }
 
-// Deletes a given HMAC key.  Key must be in an INACTIVE state.
-func (e *CloudStorageEmulator) DeleteHmacKey(ctx context.Context, in *storage.DeleteHmacKeyRequest) (*emptypb.Empty, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method DeleteHmacKey not implemented")
+func (e *CloudStorageEmulator) BidiWriteObject(server storage.Storage_BidiWriteObjectServer) error {
+	ctx := server.Context()
+
+	// Receive first message to determine if this is resumable or non-resumable
+	firstReq, err := server.Recv()
+	if err != nil {
+		if err == io.EOF {
+			return status.Errorf(codes.InvalidArgument, "no data received")
+		}
+		return status.Errorf(codes.Internal, "failed to receive first message: %v", err)
+	}
+
+	var uploadID string
+	var spec *storage.WriteObjectSpec
+	var bucketName, objectName string
+
+	// Determine if this is a resumable or non-resumable write
+	switch msg := firstReq.FirstMessage.(type) {
+	case *storage.BidiWriteObjectRequest_UploadId:
+		uploadID = msg.UploadId
+		// Load upload metadata to get bucket and object name
+		upload, err := db.SelectUploadByID(ctx, e.mongodb, uploadID)
+		if err != nil {
+			if errors.Is(err, mongo.ErrNoDocuments) {
+				return status.Errorf(codes.NotFound, "upload_id not found: %s", uploadID)
+			}
+			return status.Errorf(codes.Internal, "failed to get upload: %v", err)
+		}
+		bucketName = upload.Bucket
+		objectName = upload.ObjectName
+		spec = upload.Spec
+	case *storage.BidiWriteObjectRequest_WriteObjectSpec:
+		spec = msg.WriteObjectSpec
+		if spec == nil || spec.Resource == nil {
+			return status.Errorf(codes.InvalidArgument, "WriteObjectSpec is required for non-resumable writes")
+		}
+		bucketName = spec.Resource.Bucket
+		objectName = spec.Resource.Name
+		if bucketName == "" || objectName == "" {
+			return status.Errorf(codes.InvalidArgument, "bucket and object name are required")
+		}
+		// Create upload for tracking
+		uploadID, err = db.InsertUpload(ctx, e.mongodb, bucketName, objectName, spec)
+		if err != nil {
+			return status.Errorf(codes.Internal, "failed to create upload: %v", err)
+		}
+	default:
+		return status.Errorf(codes.InvalidArgument, "first message must contain either upload_id or write_object_spec")
+	}
+
+	// Validate bucket exists
+	_, err = db.SelectBucketByName(ctx, e.mongodb, bucketName)
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return status.Errorf(codes.NotFound, "bucket %s not found", bucketName)
+		}
+		return status.Errorf(codes.Internal, "failed to get bucket: %v", err)
+	}
+
+	// Get or create GridFS bucket
+	bucketOpts := options.GridFSBucket().SetName("cloudstorageemulator_objects")
+	gridFSBucket, err := gridfs.NewBucket(e.mongodb, bucketOpts)
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to create GridFS bucket: %v", err)
+	}
+
+	// Determine write offset
+	writeOffset := firstReq.WriteOffset
+	if writeOffset < 0 {
+		return status.Errorf(codes.InvalidArgument, "write_offset must be non-negative")
+	}
+
+	// Get current upload state
+	upload, err := db.SelectUploadByID(ctx, e.mongodb, uploadID)
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to get upload state: %v", err)
+	}
+
+	// For resumable writes, validate offset matches persisted size
+	if writeOffset > 0 && writeOffset != upload.PersistedSize {
+		return status.Errorf(codes.InvalidArgument, "write_offset %d does not match persisted_size %d", writeOffset, upload.PersistedSize)
+	}
+
+	// Prepare GridFS upload stream
+	var uploadStream *gridfs.UploadStream
+	var fileID primitive.ObjectID
+	filename := fmt.Sprintf("%s/%s", bucketName, objectName)
+
+	if writeOffset == 0 {
+		// Starting fresh - create new upload stream
+		uploadStream, err = gridFSBucket.OpenUploadStream(filename)
+		if err != nil {
+			return status.Errorf(codes.Internal, "failed to open GridFS upload stream: %v", err)
+		}
+		fileID, ok := uploadStream.FileID.(primitive.ObjectID)
+		if !ok {
+			uploadStream.Close()
+			return status.Errorf(codes.Internal, "failed to convert FileID to ObjectID")
+		}
+		upload.GridFSFileID = fileID
+		err = db.UpdateUploadFileID(ctx, e.mongodb, uploadID, fileID)
+		if err != nil {
+			uploadStream.Close()
+			return status.Errorf(codes.Internal, "failed to update upload file ID: %v", err)
+		}
+	} else {
+		// Resume existing upload - open stream with existing file ID
+		fileID = upload.GridFSFileID
+		if fileID.IsZero() {
+			return status.Errorf(codes.InvalidArgument, "cannot resume upload without file ID")
+		}
+		uploadStream, err = gridFSBucket.OpenUploadStreamWithID(fileID, filename)
+		if err != nil {
+			return status.Errorf(codes.Internal, "failed to resume GridFS upload: %v", err)
+		}
+		// For resumable uploads, we need to read existing data to validate checksums
+		// Note: GridFS doesn't support seeking, so we read the existing file
+		downloadStream, err := gridFSBucket.OpenDownloadStream(fileID)
+		if err == nil {
+			existingData := make([]byte, writeOffset)
+			_, err = downloadStream.Read(existingData)
+			downloadStream.Close()
+			if err != nil && err != io.EOF {
+				uploadStream.Close()
+				return status.Errorf(codes.Internal, "failed to read existing file data: %v", err)
+			}
+		}
+	}
+
+	defer uploadStream.Close()
+
+	// Process data chunks and write to GridFS
+	var totalWritten int64 = writeOffset
+	var allData []byte
+	var finished bool
+	var expectedCrc32c *uint32
+	var expectedMd5Hash []byte
+	hasFirstMessage := true
+
+	// Load existing data if resuming (for checksum validation)
+	if writeOffset > 0 {
+		downloadStream, err := gridFSBucket.OpenDownloadStream(fileID)
+		if err == nil {
+			existingData := make([]byte, writeOffset)
+			_, err = downloadStream.Read(existingData)
+			downloadStream.Close()
+			if err != nil && err != io.EOF {
+				return status.Errorf(codes.Internal, "failed to read existing file data: %v", err)
+			}
+			allData = existingData
+		}
+	}
+
+	// Process data chunks
+	for {
+		var req *storage.BidiWriteObjectRequest
+		if hasFirstMessage {
+			req = firstReq
+			hasFirstMessage = false
+		} else {
+			var recvErr error
+			req, recvErr = server.Recv()
+			if recvErr == io.EOF {
+				break
+			}
+			if recvErr != nil {
+				return status.Errorf(codes.Internal, "failed to receive message: %v", recvErr)
+			}
+		}
+
+		// Validate write offset
+		if req.WriteOffset != totalWritten {
+			return status.Errorf(codes.InvalidArgument, "write_offset mismatch: expected %d, got %d", totalWritten, req.WriteOffset)
+		}
+
+		// Process data chunk
+		if checksummedData := req.GetChecksummedData(); checksummedData != nil {
+			data := checksummedData.Content
+
+			// Validate CRC32C if provided (GCS uses CRC32C Castagnoli)
+			if checksummedData.Crc32C != nil {
+				calculated := crc32.Checksum(data, crc32cTable)
+				if calculated != *checksummedData.Crc32C {
+					return status.Errorf(codes.InvalidArgument, "CRC32C checksum mismatch")
+				}
+			}
+
+			// Write to GridFS stream
+			n, err := uploadStream.Write(data)
+			if err != nil {
+				return status.Errorf(codes.Internal, "failed to write to GridFS: %v", err)
+			}
+			totalWritten += int64(n)
+			allData = append(allData, data...)
+		}
+
+		// Check for object-level checksums (only in first or last message)
+		if req.ObjectChecksums != nil {
+			if req.ObjectChecksums.Crc32C != nil {
+				expectedCrc32c = req.ObjectChecksums.Crc32C
+			}
+			if len(req.ObjectChecksums.Md5Hash) > 0 {
+				expectedMd5Hash = req.ObjectChecksums.Md5Hash
+			}
+		}
+
+		// Check if write is finished
+		if req.FinishWrite {
+			finished = true
+			break
+		}
+	}
+
+	// Update persisted size
+	err = db.UpdateUploadPersistedSize(ctx, e.mongodb, uploadID, totalWritten)
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to update persisted size: %v", err)
+	}
+
+	// If not finished, return persisted size
+	if !finished {
+		return server.Send(&storage.BidiWriteObjectResponse{
+			WriteStatus: &storage.BidiWriteObjectResponse_PersistedSize{
+				PersistedSize: totalWritten,
+			},
+		})
+	}
+
+	// Close the upload stream to finalize the file
+	err = uploadStream.Close()
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to close GridFS upload stream: %v", err)
+	}
+
+	// Validate final checksums if provided
+	if expectedCrc32c != nil {
+		calculated := crc32.Checksum(allData, crc32cTable)
+		if calculated != *expectedCrc32c {
+			return status.Errorf(codes.InvalidArgument, "object CRC32C checksum mismatch")
+		}
+	}
+	if len(expectedMd5Hash) > 0 {
+		hash := md5.Sum(allData)
+		if string(hash[:]) != string(expectedMd5Hash) {
+			return status.Errorf(codes.InvalidArgument, "object MD5 checksum mismatch")
+		}
+	}
+
+	// Create object metadata
+	now := time.Now()
+	object := &storage.Object{
+		Name:           objectName,
+		Bucket:         bucketName,
+		Size:           totalWritten,
+		Generation:     time.Now().UnixNano(), // Simple generation based on timestamp
+		Metageneration: 1,
+		CreateTime:     timestamppb.New(now),
+		UpdateTime:     timestamppb.New(now),
+		ContentType:    spec.Resource.ContentType,
+	}
+
+	// Set checksums in object
+	if expectedCrc32c != nil {
+		object.Checksums = &storage.ObjectChecksums{
+			Crc32C: expectedCrc32c,
+		}
+	}
+	if len(expectedMd5Hash) > 0 {
+		if object.Checksums == nil {
+			object.Checksums = &storage.ObjectChecksums{}
+		}
+		object.Checksums.Md5Hash = expectedMd5Hash
+	}
+
+	// Store object metadata
+	err = db.InsertObject(ctx, e.mongodb, object, upload.GridFSFileID)
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to store object metadata: %v", err)
+	}
+
+	// Mark upload as completed
+	err = db.CompleteUpload(ctx, e.mongodb, uploadID)
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to complete upload: %v", err)
+	}
+
+	// Return final object
+	return server.Send(&storage.BidiWriteObjectResponse{
+		WriteStatus: &storage.BidiWriteObjectResponse_Resource{
+			Resource: object,
+		},
+	})
 }
 
-// Gets an existing HMAC key metadata for the given id.
-func (e *CloudStorageEmulator) GetHmacKey(ctx context.Context, in *storage.GetHmacKeyRequest) (*storage.HmacKeyMetadata, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetHmacKey not implemented")
-}
-
-// Lists HMAC keys under a given project with the additional filters provided.
-func (e *CloudStorageEmulator) ListHmacKeys(ctx context.Context, in *storage.ListHmacKeysRequest) (*storage.ListHmacKeysResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ListHmacKeys not implemented")
-}
-
-// Updates a given HMAC key state between ACTIVE and INACTIVE.
-func (e *CloudStorageEmulator) UpdateHmacKey(ctx context.Context, in *storage.UpdateHmacKeyRequest) (*storage.HmacKeyMetadata, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method UpdateHmacKey not implemented")
+func (e *CloudStorageEmulator) MoveObject(context.Context, *storage.MoveObjectRequest) (*storage.Object, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MoveObject not implemented")
 }
 
 // should be in the format projects/PROJECT_ID
-// PROJECT_ID should be a valid alphanumeric string
+// PROJECT_ID should be a valid alphanumeric string or '_' to represent global project alias
 // it must start with projects/ and can only be followed by a valid project id format.
 func validateProjectParent(parent string) error {
 	if !strings.HasPrefix(parent, "projects/") {
@@ -1234,6 +1497,9 @@ func validateProjectParent(parent string) error {
 	projectID := strings.TrimPrefix(parent, "projects/")
 	if projectID == "" {
 		return status.Errorf(codes.InvalidArgument, "project ID is required")
+	}
+	if projectID == "_" {
+		return nil
 	}
 	if !regexp.MustCompile(`^[a-zA-Z0-9\-:.]+$`).MatchString(projectID) {
 		return status.Errorf(codes.InvalidArgument, "project ID must be a valid format: %s", projectID)

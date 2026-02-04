@@ -8,6 +8,12 @@ This project was born out of the need for a testing environment that closely mir
 
 This is a new project, and I'd welcome contributions! Whether you want to add support for additional GCP services, improve existing emulators, fix bugs, or enhance documentation, your help is appreciated.
 
+# Challenges
+
+One great thing about GCP services is that most of the APIs have protocol buffers. This makes it easy to get started with handling the requests from the client libraries. But, sometimes like in the case of storage, the client library ("cloud.google.com/go/storage") uses protobufs that are not in the public protobuf packages ("cloud.google.com/go/storage/internal/apiv2/storagepb") but instead uses an internal one which is different than the published public one for the same service. 
+
+This is an issue when compiling since both packages, if used at the same time, will register conflicting protobuf namespaces (panics). One solution im experimenting with now is just offering this emulator as a docker container, and some helpful library commands for spinning up new instances. This way, the conflicting namespaces issue is avoided since the emulator is compiled/running on a different process/binary all together.
+
 # How to Contribute
 
 Since this project is new, there is not an established structure here yet. Just open up a Pull Request about a service you want to emulate or and bug/features you want to address and lets chat.
@@ -30,5 +36,5 @@ Since this project is new, there is not an established structure here yet. Just 
 | pubsub       | planned      |    0     | TBD          | TBD          |
 | scheduler    | planned      |    0     | TBD          | TBD          |
 | secretmanager| planned      |    0     | TBD          | TBD          |
-| storage      | in progress  |   9/29   |  ✅          | TBD          |
+| storage      | in progress  |  10/24   |  ✅          | TBD          |
 | workflows    | planned      |    0     | TBD          | TBD          |

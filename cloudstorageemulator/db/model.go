@@ -3,8 +3,8 @@ package db
 import (
 	"time"
 
+	storage "github.com/nolanrsherman/gcpemulators/cloudstorageemulator/storagepb"
 	"go.mongodb.org/mongo-driver/bson/primitive"
-	"google.golang.org/genproto/googleapis/storage/v2"
 )
 
 type BucketDocument struct {

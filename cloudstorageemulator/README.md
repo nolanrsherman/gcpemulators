@@ -12,23 +12,18 @@ Under Construction  🚧    
 1. SetIamPolicy
 1. TestIamPermissions
 1. UpdateBucket
-1. DeleteNotification
-1. GetNotification
-1. CreateNotification
-1. ListNotifications
 1. ComposeObject
 1. DeleteObject ✅
+1. RestoreObject
+1. CancelResumableWrite
 1. GetObject ✅
 1. ReadObject ✅
+1. BidiReadObject
 1. UpdateObject
 1. WriteObject ✅
+1. BidiWriteObject ✅
 1. ListObjects ✅
 1. RewriteObject
 1. StartResumableWrite
 1. QueryWriteStatus
-1. GetServiceAccount
-1. CreateHmacKey
-1. DeleteHmacKey
-1. GetHmacKey
-1. ListHmacKeys
-1. UpdateHmacKey
+1. MoveObject

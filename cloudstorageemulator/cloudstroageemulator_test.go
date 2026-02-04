@@ -11,11 +11,11 @@ import (
 	"time"
 
 	"github.com/nolanrsherman/gcpemulators/cloudstorageemulator/db"
+	storage "github.com/nolanrsherman/gcpemulators/cloudstorageemulator/storagepb"
 	"github.com/nolanrsherman/gcpemulators/internal/testcommon"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/genproto/googleapis/storage/v2"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
