@@ -9,10 +9,6 @@ service GcpEmulator {
   // Readiness checks if the emulator is ready to accept requests.
   // Returns the readiness status of the emulator.
   rpc Readiness(ReadinessRequest) returns (ReadinessResponse);
-
-  // Stop gracefully stops the emulator.
-  // Returns success when the emulator has been stopped.
-  rpc Stop(StopRequest) returns (StopResponse);
 }
 
 // ReadinessRequest is an empty request for checking emulator readiness.

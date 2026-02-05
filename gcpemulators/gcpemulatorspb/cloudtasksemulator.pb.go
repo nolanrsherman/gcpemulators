@@ -217,10 +217,9 @@ const file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_rawDesc = "" +
 	"\vStopRequest\"B\n" +
 	"\fStopResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage2\xa2\x01\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage2_\n" +
 	"\vGcpEmulator\x12P\n" +
-	"\tReadiness\x12 .gcpemulatorspb.ReadinessRequest\x1a!.gcpemulatorspb.ReadinessResponse\x12A\n" +
-	"\x04Stop\x12\x1b.gcpemulatorspb.StopRequest\x1a\x1c.gcpemulatorspb.StopResponseBCZAgithub.com/nolanrsherman/gcpemulators/gcpemulators/gcpemulatorspbb\x06proto3"
+	"\tReadiness\x12 .gcpemulatorspb.ReadinessRequest\x1a!.gcpemulatorspb.ReadinessResponseBCZAgithub.com/nolanrsherman/gcpemulators/gcpemulators/gcpemulatorspbb\x06proto3"
 
 var (
 	file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_rawDescOnce sync.Once
@@ -243,11 +242,9 @@ var file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_goTypes = []any{
 }
 var file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_depIdxs = []int32{
 	0, // 0: gcpemulatorspb.GcpEmulator.Readiness:input_type -> gcpemulatorspb.ReadinessRequest
-	2, // 1: gcpemulatorspb.GcpEmulator.Stop:input_type -> gcpemulatorspb.StopRequest
-	1, // 2: gcpemulatorspb.GcpEmulator.Readiness:output_type -> gcpemulatorspb.ReadinessResponse
-	3, // 3: gcpemulatorspb.GcpEmulator.Stop:output_type -> gcpemulatorspb.StopResponse
-	2, // [2:4] is the sub-list for method output_type
-	0, // [0:2] is the sub-list for method input_type
+	1, // 1: gcpemulatorspb.GcpEmulator.Readiness:output_type -> gcpemulatorspb.ReadinessResponse
+	1, // [1:2] is the sub-list for method output_type
+	0, // [0:1] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name

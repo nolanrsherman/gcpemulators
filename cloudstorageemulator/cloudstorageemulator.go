@@ -16,6 +16,7 @@ import (
 	grpc_zap "github.com/grpc-ecosystem/go-grpc-middleware/logging/zap"
 	"github.com/nolanrsherman/gcpemulators/cloudstorageemulator/db"
 	storage "github.com/nolanrsherman/gcpemulators/cloudstorageemulator/storagepb"
+	"github.com/nolanrsherman/gcpemulators/gcpemulators/gcpemulatorspb"
 	v1 "google.golang.org/genproto/googleapis/iam/v1"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -49,6 +50,7 @@ type CloudStorageEmulator struct {
 	mongodb *mongo.Database
 	// Embed the unimplemented server to satisfy the interface
 	storage.UnimplementedStorageServer
+	gcpemulatorspb.UnimplementedGcpEmulatorServer
 }
 
 func NewCloudStorageEmulator(port int, logger *zap.Logger, mongodb *mongo.Database) *CloudStorageEmulator {
@@ -78,6 +80,7 @@ func (e *CloudStorageEmulator) Start(ctx context.Context) error {
 	defer grpcServer.GracefulStop()
 
 	storage.RegisterStorageServer(grpcServer, e)
+	gcpemulatorspb.RegisterGcpEmulatorServer(grpcServer, e)
 
 	// Channel to signal server completion
 	serverDone := make(chan error, 1)
@@ -107,6 +110,13 @@ func (e *CloudStorageEmulator) Start(ctx context.Context) error {
 		}
 		return nil
 	}
+}
+
+func (e *CloudStorageEmulator) Readiness(context.Context, *gcpemulatorspb.ReadinessRequest) (*gcpemulatorspb.ReadinessResponse, error) {
+	return &gcpemulatorspb.ReadinessResponse{
+		Ready:   true,
+		Message: "Emulator is ready and accepting requests",
+	}, nil
 }
 
 // Permanently deletes an empty bucket.

@@ -66,7 +66,7 @@ func NewCloudStorageEmulator(opts ...func(*newEmulatorOptions)) (gcpEmulator *Gc
 		mongoUri:         "mongodb://localhost:27017/?directConnection=true",
 		dbName:           "cloudstorageemulator",
 		gcpemulatorsPath: "gcpemulators",
-		command:          "cloudstorage",
+		command:          "storage",
 	}
 	for _, opt := range opts {
 		opt(options)
@@ -113,7 +113,7 @@ func newEmulator(options *newEmulatorOptions) (*GcpEmulator, func() error, error
 	if err != nil {
 		return nil, nil, err
 	}
-	cloudTasksClient := gcpemulatorspb.NewGcpEmulatorClient(grpcConn)
+	emulatorClient := gcpemulatorspb.NewGcpEmulatorClient(grpcConn)
 	closeConnections := func() error {
 		return grpcConn.Close()
 	}
@@ -135,7 +135,7 @@ readyloop:
 			closeErr := errors.Join(closeProcess(), closeConnections())
 			return nil, nil, errors.Join(timeoutErr, closeErr)
 		case <-ticker.C:
-			readiness, err := cloudTasksClient.Readiness(ctxWaitTimeout, &gcpemulatorspb.ReadinessRequest{})
+			readiness, err := emulatorClient.Readiness(ctxWaitTimeout, &gcpemulatorspb.ReadinessRequest{})
 			if err == nil && readiness.Ready {
 				break readyloop
 			}
@@ -143,7 +143,7 @@ readyloop:
 	}
 
 	return &GcpEmulator{
-			Client: cloudTasksClient,
+			Client: emulatorClient,
 			Port:   options.port,
 		}, func() error {
 			return errors.Join(closeProcess(), closeConnections())

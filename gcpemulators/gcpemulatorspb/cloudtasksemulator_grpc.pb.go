@@ -20,7 +20,6 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	GcpEmulator_Readiness_FullMethodName = "/gcpemulatorspb.GcpEmulator/Readiness"
-	GcpEmulator_Stop_FullMethodName      = "/gcpemulatorspb.GcpEmulator/Stop"
 )
 
 // GcpEmulatorClient is the client API for GcpEmulator service.
@@ -32,9 +31,6 @@ type GcpEmulatorClient interface {
 	// Readiness checks if the emulator is ready to accept requests.
 	// Returns the readiness status of the emulator.
 	Readiness(ctx context.Context, in *ReadinessRequest, opts ...grpc.CallOption) (*ReadinessResponse, error)
-	// Stop gracefully stops the emulator.
-	// Returns success when the emulator has been stopped.
-	Stop(ctx context.Context, in *StopRequest, opts ...grpc.CallOption) (*StopResponse, error)
 }
 
 type gcpEmulatorClient struct {
@@ -55,16 +51,6 @@ func (c *gcpEmulatorClient) Readiness(ctx context.Context, in *ReadinessRequest,
 	return out, nil
 }
 
-func (c *gcpEmulatorClient) Stop(ctx context.Context, in *StopRequest, opts ...grpc.CallOption) (*StopResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(StopResponse)
-	err := c.cc.Invoke(ctx, GcpEmulator_Stop_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // GcpEmulatorServer is the server API for GcpEmulator service.
 // All implementations must embed UnimplementedGcpEmulatorServer
 // for forward compatibility.
@@ -74,9 +60,6 @@ type GcpEmulatorServer interface {
 	// Readiness checks if the emulator is ready to accept requests.
 	// Returns the readiness status of the emulator.
 	Readiness(context.Context, *ReadinessRequest) (*ReadinessResponse, error)
-	// Stop gracefully stops the emulator.
-	// Returns success when the emulator has been stopped.
-	Stop(context.Context, *StopRequest) (*StopResponse, error)
 	mustEmbedUnimplementedGcpEmulatorServer()
 }
 
@@ -89,9 +72,6 @@ type UnimplementedGcpEmulatorServer struct{}
 
 func (UnimplementedGcpEmulatorServer) Readiness(context.Context, *ReadinessRequest) (*ReadinessResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Readiness not implemented")
-}
-func (UnimplementedGcpEmulatorServer) Stop(context.Context, *StopRequest) (*StopResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method Stop not implemented")
 }
 func (UnimplementedGcpEmulatorServer) mustEmbedUnimplementedGcpEmulatorServer() {}
 func (UnimplementedGcpEmulatorServer) testEmbeddedByValue()                     {}
@@ -132,24 +112,6 @@ func _GcpEmulator_Readiness_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
-func _GcpEmulator_Stop_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(StopRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(GcpEmulatorServer).Stop(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: GcpEmulator_Stop_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(GcpEmulatorServer).Stop(ctx, req.(*StopRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 // GcpEmulator_ServiceDesc is the grpc.ServiceDesc for GcpEmulator service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -160,10 +122,6 @@ var GcpEmulator_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Readiness",
 			Handler:    _GcpEmulator_Readiness_Handler,
-		},
-		{
-			MethodName: "Stop",
-			Handler:    _GcpEmulator_Stop_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

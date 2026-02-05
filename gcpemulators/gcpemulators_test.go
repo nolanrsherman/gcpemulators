@@ -52,3 +52,20 @@ func TestNewCloudTaskEmulator(t *testing.T) {
 	})
 
 }
+
+func TestNewCloudStorageEmulator(t *testing.T) {
+	emulator, cleanup, err := NewCloudStorageEmulator()
+	require.NoError(t, err)
+	defer func(t *testing.T) {
+		t.Helper()
+		err := cleanup()
+		require.NoError(t, err)
+	}(t)
+	require.NotNil(t, emulator)
+	require.NotNil(t, cleanup)
+
+	readiness, err := emulator.Client.Readiness(context.Background(), &gcpemulatorspb.ReadinessRequest{})
+	require.NoError(t, err)
+	require.True(t, readiness.Ready)
+
+}

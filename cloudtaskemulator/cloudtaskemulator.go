@@ -354,11 +354,3 @@ func (s *CloudTaskEmulator) Readiness(context.Context, *gcpemulatorspb.Readiness
 		Message: "Emulator is ready and accepting requests",
 	}, nil
 }
-
-func (s *CloudTaskEmulator) Stop(context.Context, *gcpemulatorspb.StopRequest) (*gcpemulatorspb.StopResponse, error) {
-	s.cancelFn()
-	return &gcpemulatorspb.StopResponse{
-		Success: true,
-		Message: "Emulator stopped",
-	}, nil
-}
