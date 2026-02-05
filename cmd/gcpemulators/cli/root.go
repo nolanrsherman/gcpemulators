@@ -18,5 +18,6 @@ designed to be native to Go and easy to integrate into your test environment.`,
 func Execute(ctx context.Context, logger *zap.Logger) error {
 	rootCmd.AddCommand(newStorageCmd(ctx, logger))
 	rootCmd.AddCommand(newCloudTasksCmd(ctx, logger))
+	rootCmd.AddCommand(newVersionCmd())
 	return rootCmd.ExecuteContext(ctx)
 }

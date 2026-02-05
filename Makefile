@@ -1,4 +1,4 @@
-.PHONY: build-version minor-version docker-build docker-push docker-build-push buf help publish-tag
+.PHONY: build-version minor-version docker-build docker-push docker-build-push buf help publish-tag publish-minor-version
 
 # Docker image name
 IMAGE_NAME := nolanrs/gcpemulators
@@ -21,6 +21,7 @@ help:
 	@echo "  docker-push      - Push Docker image (both version and latest tags)"
 	@echo "  docker-build-push - Build and push Docker image"
 	@echo "  publish-tag      - Create and push a git tag based on current version"
+	@echo "  publish-minor-version - Create and push a git tag based on current minor version"
 	@echo ""
 	@echo "Current version: $(VERSION)"
 
@@ -47,6 +48,8 @@ minor-version:
 	echo "New version: $$NEW_VERSION"; \
 	echo "$$NEW_VERSION" > version.txt; \
 	echo "Updated version.txt to $$NEW_VERSION"
+	git add version.txt
+	git commit -m "Increment minor version: $(VERSION) => $$NEW_VERSION"
 
 # Build Docker image with current version and latest tags
 docker-build:

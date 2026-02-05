@@ -7,6 +7,7 @@ import (
 
 	cloudtasks "cloud.google.com/go/cloudtasks/apiv2"
 	"cloud.google.com/go/cloudtasks/apiv2/cloudtaskspb"
+	"cloud.google.com/go/storage"
 	"github.com/nolanrsherman/gcpemulators/gcpemulators/gcpemulatorspb"
 	"github.com/stretchr/testify/require"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -68,4 +69,12 @@ func TestNewCloudStorageEmulator(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, readiness.Ready)
 
+	conn, err := grpc.NewClient(fmt.Sprintf("localhost:%d", emulator.Port), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	storageClient, err := storage.NewGRPCClient(context.Background(), option.WithGRPCConn(conn))
+	require.NoError(t, err)
+
+	imgrBucketName := fmt.Sprintf("test-bucket-%s", primitive.NewObjectID().Hex())
+	err = storageClient.Bucket(imgrBucketName).Create(context.Background(), "12345", nil)
+	require.NoError(t, err)
 }
