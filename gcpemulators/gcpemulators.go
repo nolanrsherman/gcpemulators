@@ -18,7 +18,7 @@ import (
 // Starts a cloud tasks emulator using docker and returns a cleanup
 // function.
 
-type newCloudTaskEmulatorOptions struct {
+type newEmulatorOptions struct {
 	port             int
 	mongoUri         string
 	dbName           string
@@ -26,13 +26,13 @@ type newCloudTaskEmulatorOptions struct {
 	command          string
 }
 
-func WithPort(port int) func(*newCloudTaskEmulatorOptions) {
-	return func(o *newCloudTaskEmulatorOptions) {
+func WithPort(port int) func(*newEmulatorOptions) {
+	return func(o *newEmulatorOptions) {
 		o.port = port
 	}
 }
 
-type CloudTaskEmulator struct {
+type GcpEmulator struct {
 	Client gcpemulatorspb.GcpEmulatorClient
 	Port   int
 }
@@ -46,8 +46,8 @@ func findOpenPort() int {
 	return listener.Addr().(*net.TCPAddr).Port
 }
 
-func NewCloudTaskEmulator(opts ...func(*newCloudTaskEmulatorOptions)) (cloudTasksEmulator *CloudTaskEmulator, cleanup func() error, err error) {
-	options := &newCloudTaskEmulatorOptions{
+func NewCloudTaskEmulator(opts ...func(*newEmulatorOptions)) (gcpEmulator *GcpEmulator, cleanup func() error, err error) {
+	options := &newEmulatorOptions{
 		port:             findOpenPort(),
 		mongoUri:         "mongodb://localhost:27017/?directConnection=true",
 		dbName:           "cloudtaskemulator",
@@ -57,6 +57,24 @@ func NewCloudTaskEmulator(opts ...func(*newCloudTaskEmulatorOptions)) (cloudTask
 	for _, opt := range opts {
 		opt(options)
 	}
+	return newEmulator(options)
+}
+
+func NewCloudStorageEmulator(opts ...func(*newEmulatorOptions)) (gcpEmulator *GcpEmulator, cleanup func() error, err error) {
+	options := &newEmulatorOptions{
+		port:             findOpenPort(),
+		mongoUri:         "mongodb://localhost:27017/?directConnection=true",
+		dbName:           "cloudstorageemulator",
+		gcpemulatorsPath: "gcpemulators",
+		command:          "cloudstorage",
+	}
+	for _, opt := range opts {
+		opt(options)
+	}
+	return newEmulator(options)
+}
+
+func newEmulator(options *newEmulatorOptions) (*GcpEmulator, func() error, error) {
 
 	cmd := exec.Command(options.gcpemulatorsPath,
 		options.command,
@@ -124,7 +142,7 @@ readyloop:
 		}
 	}
 
-	return &CloudTaskEmulator{
+	return &GcpEmulator{
 			Client: cloudTasksClient,
 			Port:   options.port,
 		}, func() error {
