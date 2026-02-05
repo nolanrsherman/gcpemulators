@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"strconv"
 	"sync"
 	"time"
@@ -34,10 +35,24 @@ func WithPort(port int) func(*newCloudTaskEmulatorOptions) {
 	}
 }
 
-func NewCloudTaskEmulator(opts ...func(*newCloudTaskEmulatorOptions)) (cloudTasksClient cloudtasksemulatorpb.CloudTasksEmulatorServiceClient, cleanup func() error, err error) {
+type CloudTaskEmulator struct {
+	Client cloudtasksemulatorpb.CloudTasksEmulatorServiceClient
+	Port   int
+}
+
+func findOpenPort() int {
+	listener, err := net.Listen("tcp", ":0")
+	if err != nil {
+		panic(err)
+	}
+	defer listener.Close()
+	return listener.Addr().(*net.TCPAddr).Port
+}
+
+func NewCloudTaskEmulator(opts ...func(*newCloudTaskEmulatorOptions)) (cloudTasksEmulator *CloudTaskEmulator, cleanup func() error, err error) {
 	imageName := "nolanrs/gcpemulators"
 	o := &newCloudTaskEmulatorOptions{
-		port:     6441,
+		port:     findOpenPort(),
 		imageTag: "v0.2.0",
 	}
 	for _, opt := range opts {
@@ -101,7 +116,7 @@ func NewCloudTaskEmulator(opts ...func(*newCloudTaskEmulatorOptions)) (cloudTask
 	if err != nil {
 		return nil, nil, err
 	}
-	cloudTasksClient = cloudtasksemulatorpb.NewCloudTasksEmulatorServiceClient(grpcConn)
+	cloudTasksClient := cloudtasksemulatorpb.NewCloudTasksEmulatorServiceClient(grpcConn)
 
 	wg := sync.WaitGroup{}
 	wg.Add(1)
@@ -141,29 +156,32 @@ readyloop:
 		}
 	}
 
-	return cloudTasksClient, func() error {
-		defer wg.Wait()
-		defer grpcConn.Close()
-		defer cli.Close()
+	return &CloudTaskEmulator{
+			Client: cloudTasksClient,
+			Port:   o.port,
+		}, func() error {
+			defer wg.Wait()
+			defer grpcConn.Close()
+			defer cli.Close()
 
-		// capture container logs.
-		out, err := cli.ContainerLogs(ctx, resp.ID, container.LogsOptions{ShowStdout: true})
-		if err != nil {
-			return fmt.Errorf("failed to capture container logs, %w", err)
-		}
+			// capture container logs.
+			out, err := cli.ContainerLogs(ctx, resp.ID, container.LogsOptions{ShowStdout: true})
+			if err != nil {
+				return fmt.Errorf("failed to capture container logs, %w", err)
+			}
 
-		logsBuffer := bytes.NewBuffer([]byte{})
-		stdcopy.StdCopy(logsBuffer, logsBuffer, out)
+			logsBuffer := bytes.NewBuffer([]byte{})
+			stdcopy.StdCopy(logsBuffer, logsBuffer, out)
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		err = cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{
-			Force: true,
-		})
-		if err != nil {
-			err = fmt.Errorf("error occured %w, logs: \n %s", err, logsBuffer.String())
-			return err
-		}
-		return nil
-	}, nil
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			err = cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{
+				Force: true,
+			})
+			if err != nil {
+				err = fmt.Errorf("error occured %w, logs: \n %s", err, logsBuffer.String())
+				return err
+			}
+			return nil
+		}, nil
 }
