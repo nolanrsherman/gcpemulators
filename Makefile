@@ -39,6 +39,8 @@ build-version:
 	echo "New version: $$NEW_VERSION"; \
 	echo "$$NEW_VERSION" > version.txt; \
 	echo "Updated version.txt to $$NEW_VERSION"
+	git add version.txt
+	git commit -m "Increment build version: $(VERSION) => $$NEW_VERSION"
 
 # Increment minor version (e.g., v0.1.2 -> v0.2.0)
 minor-version:

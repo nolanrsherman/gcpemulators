@@ -43,14 +43,16 @@ Since this project is new, there is not an established structure here yet. Just 
 
 # How to Use
 
-## 1. Install
+## With CLI
+
+### 1. Install
 
 Install the gcpemulators cli with go
 ```sh
 go install github.com/nolanrsherman/gcpemulators/cmd/gcpemulators@latest
 ```
 
-## 2. MongoDB Database
+### 2. MongoDB Database
 
 The emulators require a MongoDB database. The easiest way to get started is to just host one locally.
 
@@ -64,7 +66,7 @@ docker run  \
 
 There are many ways to host MongoDB. `gcpemulators` accepts a standard MongoDB connection string, so you can specify any MongoDB instance you want (local or remote).
 
-## 3. Run
+### 3. Run
 
 ### (Option 1). CLI
 
@@ -191,3 +193,88 @@ func main() {
 	fmt.Println("Bucket created:", bucketName)
 }
 ```
+
+## With Docker
+
+### Docker Run
+
+The published Docker image bundles the `gcpemulators` binary and a MongoDB instance in a single container.
+You run it by choosing which emulator to start via the CLI arguments.
+
+Start **Cloud Storage** emulator on port `6351`:
+
+```sh
+docker run --rm -p 6351:6351 nolanrs/gcpemulators:latest storage 
+```
+
+Start **Cloud Tasks** emulator on port `6352`:
+
+```sh
+docker run --rm -p 6352:6352 nolanrs/gcpemulators:latest cloudtasks
+```
+
+Once running, the emulators are available on `localhost` at the respective port on your host machine.
+
+#### Connecting with gRPC
+
+For low-level access you can connect directly with `google.golang.org/grpc`:
+
+```go
+conn, err := grpc.NewClient("localhost:6351", grpc.WithTransportCredentials(insecure.NewCredentials()))
+if err != nil {
+	log.Fatalf("failed to create grpc client: %v", err)
+}
+defer conn.Close()
+
+// Use conn with generated gRPC clients, e.g. storagepb.NewStorageClient(conn)
+```
+
+#### Connecting with Google Cloud clients (example: Cloud Storage)
+
+When using the official Google Cloud clients, point them at the Docker emulator by
+reusing the gRPC connection:
+
+```go
+ctx := context.Background()
+
+// Connect to the storage emulator running in Docker on localhost:6351
+conn, err := grpc.NewClient("localhost:6351", grpc.WithTransportCredentials(insecure.NewCredentials()))
+if err != nil {
+	log.Fatalf("failed to create grpc client: %v", err)
+}
+defer conn.Close()
+
+storageClient, err := storage.NewGRPCClient(ctx, option.WithGRPCConn(conn))
+if err != nil {
+	log.Fatalf("failed to create storage client: %v", err)
+}
+defer storageClient.Close()
+
+// Now use the storage client as usual
+err = storageClient.Bucket("my-bucket-name").Create(ctx, "12345", nil)
+if err != nil {
+	log.Fatalf("failed to create bucket: %v", err)
+}
+```
+
+### Docker Compose
+
+You can also run the emulator container via Docker Compose:
+
+```yaml
+services:
+  gcpemulators:
+    image: nolanrs/gcpemulators:latest
+    command: >
+      storage
+    ports:
+      - "6351:6351"
+```
+
+Then start it with:
+
+```sh
+docker compose up gcpemulators
+```
+
+Your application can then connect to `localhost:6351` exactly as in the examples above.
