@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package cloudtasksemulatorpb;
+
+option go_package = "github.com/nolanrsherman/gcpemulators/cloudtaskemulator/cloudtasksemulatorpb";
+
+// CloudTasksEmulatorService provides control and health check methods for the Cloud Tasks emulator.
+service CloudTasksEmulatorService {
+  // Readiness checks if the emulator is ready to accept requests.
+  // Returns the readiness status of the emulator.
+  rpc Readiness(ReadinessRequest) returns (ReadinessResponse);
+
+  // Stop gracefully stops the emulator.
+  // Returns success when the emulator has been stopped.
+  rpc Stop(StopRequest) returns (StopResponse);
+}
+
+// ReadinessRequest is an empty request for checking emulator readiness.
+message ReadinessRequest {}
+
+// ReadinessResponse contains the readiness status of the emulator.
+message ReadinessResponse {
+  // ready indicates whether the emulator is ready to accept requests.
+  bool ready = 1;
+  // message provides additional information about the readiness status.
+  string message = 2;
+}
+
+// StopRequest is an empty request for stopping the emulator.
+message StopRequest {}
+
+// StopResponse contains the result of stopping the emulator.
+message StopResponse {
+  // success indicates whether the emulator was stopped successfully.
+  bool success = 1;
+  // message provides additional information about the stop operation.
+  string message = 2;
+}

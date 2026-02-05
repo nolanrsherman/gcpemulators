@@ -17,6 +17,7 @@ import (
 
 	"cloud.google.com/go/cloudtasks/apiv2/cloudtaskspb"
 	"github.com/golang-migrate/migrate/v4"
+	"github.com/nolanrsherman/gcpemulators/cloudtaskemulator/cloudtasksemulatorpb"
 	"github.com/nolanrsherman/gcpemulators/cloudtaskemulator/db"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -27,21 +28,6 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// Server implements the Cloud Tasks gRPC service interface.
-// It provides an emulator for GCP Cloud Tasks that can be used for local testing.
-type Server struct {
-	db     *mongo.Database
-	logger *zap.Logger
-	cloudtaskspb.UnimplementedCloudTasksServer
-}
-
-func NewServer(db *mongo.Database, logger *zap.Logger) *Server {
-	return &Server{
-		db:     db,
-		logger: logger.Named("cloudtaskemulator"),
-	}
-}
-
 type CloudTaskEmulator struct {
 	mongoDbURI      string
 	dbName          string
@@ -49,6 +35,9 @@ type CloudTaskEmulator struct {
 	logger          *zap.Logger
 	port            int
 	managedQueueIds map[primitive.ObjectID]struct{}
+	cancelFn        context.CancelFunc
+	cloudtaskspb.UnimplementedCloudTasksServer
+	cloudtasksemulatorpb.UnimplementedCloudTasksEmulatorServiceServer
 }
 
 func (s *CloudTaskEmulator) Port() int {
@@ -64,10 +53,15 @@ func NewCloudTaskEmulator(mongoDBURI, dbBane string, logger *zap.Logger, grpcPor
 		logger:          logger.Named("cloudtaskemulator"),
 		port:            grpcPort,
 		managedQueueIds: make(map[primitive.ObjectID]struct{}),
+		cancelFn:        func() {},
 	}
 }
 
 func (s *CloudTaskEmulator) Run(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	s.cancelFn = cancel
+
 	defer s.logger.Sync()
 	err := db.RunMigrations(s.mongoDbURI, s.dbName)
 	if err != nil && !errors.Is(err, migrate.ErrNoChange) {
@@ -110,8 +104,9 @@ func (s *CloudTaskEmulator) runGRPCServer(ctx context.Context) error {
 	grpcServer := grpc.NewServer(
 		grpc.Creds(insecure.NewCredentials()),
 	)
-	server := NewServer(s.mongoDB, s.logger)
-	cloudtaskspb.RegisterCloudTasksServer(grpcServer, server)
+
+	cloudtaskspb.RegisterCloudTasksServer(grpcServer, s)
+	cloudtasksemulatorpb.RegisterCloudTasksEmulatorServiceServer(grpcServer, s)
 
 	// Channel to signal server completion
 	serverDone := make(chan error, 1)
@@ -351,4 +346,19 @@ func (s *CloudTaskEmulator) processQueue(ctx context.Context, queue *db.Queue) e
 		}
 
 	}
+}
+
+func (s *CloudTaskEmulator) Readiness(context.Context, *cloudtasksemulatorpb.ReadinessRequest) (*cloudtasksemulatorpb.ReadinessResponse, error) {
+	return &cloudtasksemulatorpb.ReadinessResponse{
+		Ready:   true,
+		Message: "Emulator is ready and accepting requests",
+	}, nil
+}
+
+func (s *CloudTaskEmulator) Stop(context.Context, *cloudtasksemulatorpb.StopRequest) (*cloudtasksemulatorpb.StopResponse, error) {
+	s.cancelFn()
+	return &cloudtasksemulatorpb.StopResponse{
+		Success: true,
+		Message: "Emulator stopped",
+	}, nil
 }

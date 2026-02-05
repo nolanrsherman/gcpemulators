@@ -17,6 +17,7 @@ import (
 	cloudtasks "cloud.google.com/go/cloudtasks/apiv2"
 	"cloud.google.com/go/cloudtasks/apiv2/cloudtaskspb"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/nolanrsherman/gcpemulators/cloudtaskemulator/cloudtasksemulatorpb"
 	"github.com/nolanrsherman/gcpemulators/cloudtaskemulator/db"
 	"github.com/stretchr/testify/require"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -127,6 +128,25 @@ func RequireNoErrorBesides(t *testing.T, err error, allowedErrors ...error) {
 	require.FailNow(t, "expected no error, got %v", err)
 }
 
+func TestCloudTaskEmulatorService_RpcServer(t *testing.T) {
+	mongoDB, dbCleanup := WhenThereIsADatabase(t)
+	defer dbCleanup(t)
+
+	emulator := WhenThereIsACloudTaskEmulator(t, mongoDB)
+	stopEmulator := WhenTheCloudTaskEmulatorIsRunning(t, emulator)
+	defer stopEmulator(t)
+
+	// connect to rpc server on port 8579
+	conn, err := grpc.NewClient(fmt.Sprintf("localhost:%d", emulator.port), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+
+	cloudTaskClient := cloudtasksemulatorpb.NewCloudTasksEmulatorServiceClient(conn)
+
+	readiness, err := cloudTaskClient.Readiness(context.Background(), &cloudtasksemulatorpb.ReadinessRequest{})
+	require.NoError(t, err)
+	require.True(t, readiness.Ready)
+}
+
 func TestCloudTaskEmulator_RpcServer(t *testing.T) {
 	mongoDB, dbCleanup := WhenThereIsADatabase(t)
 	defer dbCleanup(t)
@@ -230,17 +250,19 @@ func TestCloudTaskEmulator_Service_PreExistingQueueAndTaskShouldBeProcessed(t *t
 	defer dbCleanup(t)
 
 	// Pre-seed the database with a queue and task
-	clientServer := NewServer(mongoDB, zap.NewNop())
-	testQueue := WhenAQueueIsCreated(t, clientServer, mongoDB)
-	testTask := WhenAHttpTargetTaskIsCreated(t, clientServer, mongoDB, testQueue, &cloudtaskspb.HttpRequest{
+	emulator := NewCloudTaskEmulator(testMongoURI, mongoDB.Name(), zap.NewNop(), 0)
+	stopEmulator := WhenTheCloudTaskEmulatorIsRunning(t, emulator)
+
+	testQueue := WhenAQueueIsCreated(t, emulator, mongoDB)
+	testTask := WhenAHttpTargetTaskIsCreated(t, emulator, mongoDB, testQueue, &cloudtaskspb.HttpRequest{
 		Url: "http://localhost:9999/test",
 	})
 	require.NotNil(t, testQueue)
 	require.NotNil(t, testTask)
+	stopEmulator(t)
 
 	// start up the emulator
-	emulator := WhenThereIsACloudTaskEmulator(t, mongoDB)
-	stopEmulator := WhenTheCloudTaskEmulatorIsRunning(t, emulator)
+	stopEmulator = WhenTheCloudTaskEmulatorIsRunning(t, emulator)
 	defer stopEmulator(t)
 
 	require.Eventually(t, func() bool {

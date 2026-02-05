@@ -25,7 +25,7 @@ import (
 // Queues are returned in lexicographical order. Supports simple pagination via
 // page_size and page_token. The filter field is currently ignored by the
 // emulator.
-func (s *Server) ListQueues(ctx context.Context, req *cloudtaskspb.ListQueuesRequest) (*cloudtaskspb.ListQueuesResponse, error) {
+func (s *CloudTaskEmulator) ListQueues(ctx context.Context, req *cloudtaskspb.ListQueuesRequest) (*cloudtaskspb.ListQueuesResponse, error) {
 	// Validate parent
 	if err := validateParentResourceName(req.GetParent()); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid parent resource name: %v", err)
@@ -52,7 +52,7 @@ func (s *Server) ListQueues(ctx context.Context, req *cloudtaskspb.ListQueuesReq
 		offset = int64(n)
 	}
 
-	col := s.db.Collection(db.CollectionQueues)
+	col := s.mongoDB.Collection(db.CollectionQueues)
 
 	// Filter queues by parent prefix
 	filter := bson.M{
@@ -102,8 +102,8 @@ func (s *Server) ListQueues(ctx context.Context, req *cloudtaskspb.ListQueuesReq
 }
 
 // Gets a queue.
-func (s *Server) GetQueue(ctx context.Context, req *cloudtaskspb.GetQueueRequest) (*cloudtaskspb.Queue, error) {
-	queue, err := db.SelectQueueByName(ctx, s.db, req.Name)
+func (s *CloudTaskEmulator) GetQueue(ctx context.Context, req *cloudtaskspb.GetQueueRequest) (*cloudtaskspb.Queue, error) {
+	queue, err := db.SelectQueueByName(ctx, s.mongoDB, req.Name)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get queue: %v", err)
 	}
@@ -122,7 +122,7 @@ func (s *Server) GetQueue(ctx context.Context, req *cloudtaskspb.GetQueueRequest
 // [Overview of Queue Management and
 // queue.yaml](https://cloud.google.com/tasks/docs/queue-yaml) before using
 // this method.
-func (s *Server) CreateQueue(ctx context.Context, req *cloudtaskspb.CreateQueueRequest) (*cloudtaskspb.Queue, error) {
+func (s *CloudTaskEmulator) CreateQueue(ctx context.Context, req *cloudtaskspb.CreateQueueRequest) (*cloudtaskspb.Queue, error) {
 	if err := validateParentResourceName(req.Parent); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid parent resource name: %v", err)
 	}
@@ -246,7 +246,7 @@ func (s *Server) CreateQueue(ctx context.Context, req *cloudtaskspb.CreateQueueR
 		queue.MaxDoublings = req.Queue.RetryConfig.MaxDoublings
 	}
 
-	queue, err := db.InsertQueue(ctx, s.db, queue)
+	queue, err := db.InsertQueue(ctx, s.mongoDB, queue)
 	if err != nil {
 		return nil, err
 	}
@@ -269,7 +269,7 @@ func (s *Server) CreateQueue(ctx context.Context, req *cloudtaskspb.CreateQueueR
 // [Overview of Queue Management and
 // queue.yaml](https://cloud.google.com/tasks/docs/queue-yaml) before using
 // this method.
-func (s *Server) UpdateQueue(ctx context.Context, req *cloudtaskspb.UpdateQueueRequest) (*cloudtaskspb.Queue, error) {
+func (s *CloudTaskEmulator) UpdateQueue(ctx context.Context, req *cloudtaskspb.UpdateQueueRequest) (*cloudtaskspb.Queue, error) {
 	if req.GetQueue() == nil {
 		return nil, status.Errorf(codes.InvalidArgument, "queue must be provided")
 	}
@@ -331,7 +331,7 @@ func (s *Server) UpdateQueue(ctx context.Context, req *cloudtaskspb.UpdateQueueR
 	}
 
 	// Fetch existing queue, if any.
-	existing, err := db.SelectQueueByName(ctx, s.db, name)
+	existing, err := db.SelectQueueByName(ctx, s.mongoDB, name)
 	if err != nil {
 		// If not found, create a new queue using the same defaults as CreateQueue.
 		existing = &db.Queue{
@@ -438,7 +438,7 @@ func (s *Server) UpdateQueue(ctx context.Context, req *cloudtaskspb.UpdateQueueR
 	existing.UpdatedAt = time.Now()
 
 	// Upsert queue by name.
-	col := s.db.Collection(db.CollectionQueues)
+	col := s.mongoDB.Collection(db.CollectionQueues)
 	if _, err := col.UpdateOne(
 		ctx,
 		bson.M{"name": existing.Name},
@@ -466,7 +466,7 @@ func (s *Server) UpdateQueue(ctx context.Context, req *cloudtaskspb.UpdateQueueR
 // [Overview of Queue Management and
 // queue.yaml](https://cloud.google.com/tasks/docs/queue-yaml) before using
 // this method.
-func (s *Server) DeleteQueue(ctx context.Context, req *cloudtaskspb.DeleteQueueRequest) (*emptypb.Empty, error) {
+func (s *CloudTaskEmulator) DeleteQueue(ctx context.Context, req *cloudtaskspb.DeleteQueueRequest) (*emptypb.Empty, error) {
 	name := req.GetName()
 	if name == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "queue name is required")
@@ -475,7 +475,7 @@ func (s *Server) DeleteQueue(ctx context.Context, req *cloudtaskspb.DeleteQueueR
 		return nil, status.Errorf(codes.InvalidArgument, "invalid queue name: %v", err)
 	}
 
-	if err := db.SoftDeleteQueueByName(ctx, s.db, name); err != nil {
+	if err := db.SoftDeleteQueueByName(ctx, s.mongoDB, name); err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			return nil, status.Errorf(codes.NotFound, "queue %s not found", name)
 		}
@@ -491,7 +491,7 @@ func (s *Server) DeleteQueue(ctx context.Context, req *cloudtaskspb.DeleteQueueR
 //
 // Purge operations can take up to one minute to take effect. Tasks
 // might be dispatched before the purge takes effect. A purge is irreversible.
-func (s *Server) PurgeQueue(context.Context, *cloudtaskspb.PurgeQueueRequest) (*cloudtaskspb.Queue, error) {
+func (s *CloudTaskEmulator) PurgeQueue(context.Context, *cloudtaskspb.PurgeQueueRequest) (*cloudtaskspb.Queue, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PurgeQueue not implemented")
 }
 
@@ -503,7 +503,7 @@ func (s *Server) PurgeQueue(context.Context, *cloudtaskspb.PurgeQueueRequest) (*
 // still be added when the queue is paused. A queue is paused if its
 // [state][google.cloud.tasks.v2.Queue.state] is
 // [PAUSED][google.cloud.tasks.v2.Queue.State.PAUSED].
-func (s *Server) PauseQueue(ctx context.Context, req *cloudtaskspb.PauseQueueRequest) (*cloudtaskspb.Queue, error) {
+func (s *CloudTaskEmulator) PauseQueue(ctx context.Context, req *cloudtaskspb.PauseQueueRequest) (*cloudtaskspb.Queue, error) {
 	name := req.GetName()
 	if name == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "queue name is required")
@@ -512,7 +512,7 @@ func (s *Server) PauseQueue(ctx context.Context, req *cloudtaskspb.PauseQueueReq
 		return nil, status.Errorf(codes.InvalidArgument, "invalid queue name: %v", err)
 	}
 
-	if err := db.UpdateQueueState(ctx, s.db, name, cloudtaskspb.Queue_PAUSED); err != nil {
+	if err := db.UpdateQueueState(ctx, s.mongoDB, name, cloudtaskspb.Queue_PAUSED); err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			return nil, status.Errorf(codes.NotFound, "queue %s not found", name)
 		}
@@ -520,7 +520,7 @@ func (s *Server) PauseQueue(ctx context.Context, req *cloudtaskspb.PauseQueueReq
 	}
 
 	// Fetch and return the updated queue
-	queue, err := db.SelectQueueByName(ctx, s.db, name)
+	queue, err := db.SelectQueueByName(ctx, s.mongoDB, name)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get updated queue: %v", err)
 	}
@@ -542,7 +542,7 @@ func (s *Server) PauseQueue(ctx context.Context, req *cloudtaskspb.PauseQueueReq
 // queues, follow the 500/50/5 pattern described in
 // [Managing Cloud Tasks Scaling
 // Risks](https://cloud.google.com/tasks/docs/manage-cloud-task-scaling).
-func (s *Server) ResumeQueue(ctx context.Context, req *cloudtaskspb.ResumeQueueRequest) (*cloudtaskspb.Queue, error) {
+func (s *CloudTaskEmulator) ResumeQueue(ctx context.Context, req *cloudtaskspb.ResumeQueueRequest) (*cloudtaskspb.Queue, error) {
 	name := req.GetName()
 	if name == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "queue name is required")
@@ -551,7 +551,7 @@ func (s *Server) ResumeQueue(ctx context.Context, req *cloudtaskspb.ResumeQueueR
 		return nil, status.Errorf(codes.InvalidArgument, "invalid queue name: %v", err)
 	}
 
-	if err := db.UpdateQueueState(ctx, s.db, name, cloudtaskspb.Queue_RUNNING); err != nil {
+	if err := db.UpdateQueueState(ctx, s.mongoDB, name, cloudtaskspb.Queue_RUNNING); err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			return nil, status.Errorf(codes.NotFound, "queue %s not found", name)
 		}
@@ -559,7 +559,7 @@ func (s *Server) ResumeQueue(ctx context.Context, req *cloudtaskspb.ResumeQueueR
 	}
 
 	// Fetch and return the updated queue
-	queue, err := db.SelectQueueByName(ctx, s.db, name)
+	queue, err := db.SelectQueueByName(ctx, s.mongoDB, name)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get updated queue: %v", err)
 	}

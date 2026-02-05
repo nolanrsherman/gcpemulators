@@ -33,7 +33,7 @@ func TestListQueues(t *testing.T) {
 		require.NoError(t, err)
 
 		logger := zap.NewNop()
-		srv := NewServer(mongoDB, logger)
+		srv := NewCloudTaskEmulator(testMongoURI, mongoDB.Name(), logger, 0)
 
 		_, err = srv.ListQueues(ctx, &cloudtaskspb.ListQueuesRequest{
 			Parent: "",
@@ -51,7 +51,7 @@ func TestListQueues(t *testing.T) {
 		require.NoError(t, err)
 
 		logger := zap.NewNop()
-		srv := NewServer(mongoDB, logger)
+		srv := NewCloudTaskEmulator(testMongoURI, mongoDB.Name(), logger, 0)
 
 		_, err = srv.ListQueues(ctx, &cloudtaskspb.ListQueuesRequest{
 			Parent: "invalid-parent",
@@ -65,11 +65,11 @@ func TestListQueues(t *testing.T) {
 	t.Run("should return queues in lexicographical order and support pagination", func(t *testing.T) {
 		mongoDB, cleanup := db.NewTestDatabase(ctx, t, testMongoURI)
 		defer cleanup(t)
-		err := db.RunMigrations(testMongoURI, mongoDB.Name())
-		require.NoError(t, err)
 
 		logger := zap.NewNop()
-		srv := NewServer(mongoDB, logger)
+		srv := NewCloudTaskEmulator(testMongoURI, mongoDB.Name(), logger, 0)
+		stopEmulator := WhenTheCloudTaskEmulatorIsRunning(t, srv)
+		defer stopEmulator(t)
 
 		parent := "projects/test-project/locations/us-central1"
 
@@ -122,11 +122,11 @@ func TestGetQueue(t *testing.T) {
 	ctx := context.Background()
 	mongoDB, cleanup := db.NewTestDatabase(ctx, t, testMongoURI)
 	defer cleanup(t)
-	err := db.RunMigrations(testMongoURI, mongoDB.Name())
-	require.NoError(t, err)
 
 	logger := zap.NewNop()
-	srv := NewServer(mongoDB, logger)
+	srv := NewCloudTaskEmulator(testMongoURI, mongoDB.Name(), logger, 0)
+	stopEmulator := WhenTheCloudTaskEmulatorIsRunning(t, srv)
+	defer stopEmulator(t)
 
 	parent := "projects/test-project/locations/us-central1"
 
@@ -163,11 +163,11 @@ func TestCreateQueue(t *testing.T) {
 	ctx := context.Background()
 	mongoDB, cleanup := db.NewTestDatabase(ctx, t, testMongoURI)
 	defer cleanup(t)
-	err := db.RunMigrations(testMongoURI, mongoDB.Name())
-	require.NoError(t, err)
 
 	logger := zap.NewNop()
-	srv := NewServer(mongoDB, logger)
+	srv := NewCloudTaskEmulator(testMongoURI, mongoDB.Name(), logger, 0)
+	stopEmulator := WhenTheCloudTaskEmulatorIsRunning(t, srv)
+	defer stopEmulator(t)
 
 	parent := "projects/test-project/locations/us-central1"
 
@@ -398,11 +398,11 @@ func TestUpdateQueue(t *testing.T) {
 	ctx := context.Background()
 	mongoDB, cleanup := db.NewTestDatabase(ctx, t, testMongoURI)
 	defer cleanup(t)
-	err := db.RunMigrations(testMongoURI, mongoDB.Name())
-	require.NoError(t, err)
 
 	logger := zap.NewNop()
-	srv := NewServer(mongoDB, logger)
+	srv := NewCloudTaskEmulator(testMongoURI, mongoDB.Name(), logger, 0)
+	stopEmulator := WhenTheCloudTaskEmulatorIsRunning(t, srv)
+	defer stopEmulator(t)
 
 	parent := "projects/test-project/locations/us-central1"
 
@@ -672,11 +672,11 @@ func TestDeleteQueue(t *testing.T) {
 
 	mongoDB, cleanup := db.NewTestDatabase(ctx, t, testMongoURI)
 	defer cleanup(t)
-	err := db.RunMigrations(testMongoURI, mongoDB.Name())
-	require.NoError(t, err)
 
 	logger := zap.NewNop()
-	srv := NewServer(mongoDB, logger)
+	srv := NewCloudTaskEmulator(testMongoURI, mongoDB.Name(), logger, 0)
+	stopEmulator := WhenTheCloudTaskEmulatorIsRunning(t, srv)
+	defer stopEmulator(t)
 
 	parent := "projects/test-project/locations/us-central1"
 
@@ -746,11 +746,11 @@ func TestPauseQueue(t *testing.T) {
 
 	mongoDB, cleanup := db.NewTestDatabase(ctx, t, testMongoURI)
 	defer cleanup(t)
-	err := db.RunMigrations(testMongoURI, mongoDB.Name())
-	require.NoError(t, err)
 
 	logger := zap.NewNop()
-	srv := NewServer(mongoDB, logger)
+	srv := NewCloudTaskEmulator(testMongoURI, mongoDB.Name(), logger, 0)
+	stopEmulator := WhenTheCloudTaskEmulatorIsRunning(t, srv)
+	defer stopEmulator(t)
 
 	parent := "projects/test-project/locations/us-central1"
 
@@ -819,12 +819,11 @@ func TestResumeQueue(t *testing.T) {
 
 	mongoDB, cleanup := db.NewTestDatabase(ctx, t, testMongoURI)
 	defer cleanup(t)
-	err := db.RunMigrations(testMongoURI, mongoDB.Name())
-	require.NoError(t, err)
 
 	logger := zap.NewNop()
-	srv := NewServer(mongoDB, logger)
-
+	srv := NewCloudTaskEmulator(testMongoURI, mongoDB.Name(), logger, 0)
+	stopEmulator := WhenTheCloudTaskEmulatorIsRunning(t, srv)
+	defer stopEmulator(t)
 	parent := "projects/test-project/locations/us-central1"
 
 	t.Run("rejects empty name", func(t *testing.T) {

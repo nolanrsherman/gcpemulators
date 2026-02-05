@@ -8,8 +8,21 @@ mkdir -p /var/log/mongodb
 # Start MongoDB as a background process
 mongod --fork --logpath /var/log/mongodb/mongod.log --bind_ip_all
 
-# Wait a moment for MongoDB to start
-sleep 2
+# Wait for MongoDB to be ready (health check instead of fixed sleep)
+echo "Waiting for MongoDB to be ready..."
+max_attempts=30
+attempt=0
+while [ $attempt -lt $max_attempts ]; do
+    if mongosh --quiet --eval "db.adminCommand('ping')" > /dev/null 2>&1; then
+        echo "MongoDB is ready"
+        break
+    fi
+    attempt=$((attempt + 1))
+    sleep 0.1
+done
+if [ $attempt -eq $max_attempts ]; then
+    echo "Warning: MongoDB may not be fully ready"
+fi
 
 # Function to handle cleanup and signal forwarding
 cleanup() {
@@ -29,7 +42,7 @@ cleanup() {
 trap cleanup TERM INT
 
 # Start Go process in background and capture PID
-go run cmd/gcpemulators/main.go "$@" &
+/usr/local/bin/gcpemulators "$@" &
 PID=$!
 
 # Wait for the Go process to exit

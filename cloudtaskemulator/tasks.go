@@ -32,7 +32,7 @@ import (
 //
 // The tasks may be returned in any order. The ordering may change at any
 // time.
-func (s *Server) ListTasks(ctx context.Context, req *cloudtaskspb.ListTasksRequest) (*cloudtaskspb.ListTasksResponse, error) {
+func (s *CloudTaskEmulator) ListTasks(ctx context.Context, req *cloudtaskspb.ListTasksRequest) (*cloudtaskspb.ListTasksResponse, error) {
 	// Validate parent (queue name)
 	parentName := req.GetParent()
 	if parentName == "" {
@@ -43,7 +43,7 @@ func (s *Server) ListTasks(ctx context.Context, req *cloudtaskspb.ListTasksReque
 	}
 
 	// Verify the queue exists and get its ID for filtering tasks
-	queue, err := db.SelectQueueByName(ctx, s.db, parentName)
+	queue, err := db.SelectQueueByName(ctx, s.mongoDB, parentName)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			return nil, status.Errorf(codes.NotFound, "queue %s not found", parentName)
@@ -70,7 +70,7 @@ func (s *Server) ListTasks(ctx context.Context, req *cloudtaskspb.ListTasksReque
 		offset = int64(n)
 	}
 
-	col := s.db.Collection(db.CollectionTasks)
+	col := s.mongoDB.Collection(db.CollectionTasks)
 
 	// Filter tasks by queue id and exclude soft-deleted tasks
 	filter := bson.M{
@@ -127,7 +127,7 @@ func (s *Server) ListTasks(ctx context.Context, req *cloudtaskspb.ListTasksReque
 }
 
 // Gets a task.
-func (s *Server) GetTask(ctx context.Context, req *cloudtaskspb.GetTaskRequest) (*cloudtaskspb.Task, error) {
+func (s *CloudTaskEmulator) GetTask(ctx context.Context, req *cloudtaskspb.GetTaskRequest) (*cloudtaskspb.Task, error) {
 	// Validate task name
 	if req.Name == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "task name is required")
@@ -137,7 +137,7 @@ func (s *Server) GetTask(ctx context.Context, req *cloudtaskspb.GetTaskRequest) 
 	}
 
 	// Get task from database
-	task, err := db.SelectTaskByName(ctx, s.db, req.Name)
+	task, err := db.SelectTaskByName(ctx, s.mongoDB, req.Name)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			return nil, status.Errorf(codes.NotFound, "task %s not found", req.Name)
@@ -168,7 +168,7 @@ func (s *Server) GetTask(ctx context.Context, req *cloudtaskspb.GetTaskRequest) 
 // Tasks cannot be updated after creation; there is no UpdateTask command.
 //
 // * The maximum task size is 100KB.
-func (s *Server) CreateTask(ctx context.Context, req *cloudtaskspb.CreateTaskRequest) (*cloudtaskspb.Task, error) {
+func (s *CloudTaskEmulator) CreateTask(ctx context.Context, req *cloudtaskspb.CreateTaskRequest) (*cloudtaskspb.Task, error) {
 	// Validate parent name (queue name)
 	parentName := req.GetParent()
 	if parentName == "" {
@@ -179,7 +179,7 @@ func (s *Server) CreateTask(ctx context.Context, req *cloudtaskspb.CreateTaskReq
 	}
 
 	// Verify the queue exists and get its ID
-	queue, err := db.SelectQueueByName(ctx, s.db, parentName)
+	queue, err := db.SelectQueueByName(ctx, s.mongoDB, parentName)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			return nil, status.Errorf(codes.NotFound, "queue %s not found", parentName)
@@ -305,7 +305,7 @@ func (s *Server) CreateTask(ctx context.Context, req *cloudtaskspb.CreateTaskReq
 	dbTask.ResponseCount = 0
 
 	// Insert task into database
-	dbTask, err = db.InsertTask(ctx, s.db, dbTask)
+	dbTask, err = db.InsertTask(ctx, s.mongoDB, dbTask)
 	if err != nil {
 		if mongo.IsDuplicateKeyError(err) {
 			// Task deduplication: if a task with the same name already exists
@@ -327,7 +327,7 @@ func (s *Server) CreateTask(ctx context.Context, req *cloudtaskspb.CreateTaskReq
 // A task can be deleted if it is scheduled or dispatched. A task
 // cannot be deleted if it has executed successfully or permanently
 // failed.
-func (s *Server) DeleteTask(ctx context.Context, req *cloudtaskspb.DeleteTaskRequest) (*emptypb.Empty, error) {
+func (s *CloudTaskEmulator) DeleteTask(ctx context.Context, req *cloudtaskspb.DeleteTaskRequest) (*emptypb.Empty, error) {
 	// Validate task name
 	if req.Name == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "task name is required")
@@ -337,7 +337,7 @@ func (s *Server) DeleteTask(ctx context.Context, req *cloudtaskspb.DeleteTaskReq
 	}
 
 	// Fetch task to check if it can be deleted
-	task, err := db.SelectTaskByName(ctx, s.db, req.Name)
+	task, err := db.SelectTaskByName(ctx, s.mongoDB, req.Name)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			return nil, status.Errorf(codes.NotFound, "task %s not found", req.Name)
@@ -352,7 +352,7 @@ func (s *Server) DeleteTask(ctx context.Context, req *cloudtaskspb.DeleteTaskReq
 	}
 
 	// Soft delete the task
-	if err := db.SoftDeleteTaskByName(ctx, s.db, req.Name); err != nil {
+	if err := db.SoftDeleteTaskByName(ctx, s.mongoDB, req.Name); err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			return nil, status.Errorf(codes.NotFound, "task %s not found", req.Name)
 		}
@@ -388,7 +388,7 @@ func (s *Server) DeleteTask(ctx context.Context, req *cloudtaskspb.DeleteTaskReq
 // [RunTask][google.cloud.tasks.v2.CloudTasks.RunTask] returns
 // [NOT_FOUND][google.rpc.Code.NOT_FOUND] when it is called on a
 // task that has already succeeded or permanently failed.
-func (s *Server) RunTask(ctx context.Context, req *cloudtaskspb.RunTaskRequest) (*cloudtaskspb.Task, error) {
+func (s *CloudTaskEmulator) RunTask(ctx context.Context, req *cloudtaskspb.RunTaskRequest) (*cloudtaskspb.Task, error) {
 	// Validate task name
 	if req.Name == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "task name is required")
@@ -398,7 +398,7 @@ func (s *Server) RunTask(ctx context.Context, req *cloudtaskspb.RunTaskRequest) 
 	}
 
 	// Fetch task from database
-	task, err := db.SelectTaskByName(ctx, s.db, req.Name)
+	task, err := db.SelectTaskByName(ctx, s.mongoDB, req.Name)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			return nil, status.Errorf(codes.NotFound, "task %s not found", req.Name)
@@ -412,7 +412,7 @@ func (s *Server) RunTask(ctx context.Context, req *cloudtaskspb.RunTaskRequest) 
 	}
 
 	// Get the queue for this task
-	queue, err := db.SelectQueueByID(ctx, s.db, task.QueueID)
+	queue, err := db.SelectQueueByID(ctx, s.mongoDB, task.QueueID)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			return nil, status.Errorf(codes.Internal, "queue for task not found")
@@ -434,7 +434,7 @@ func (s *Server) RunTask(ctx context.Context, req *cloudtaskspb.RunTaskRequest) 
 	lockDuration := leaseDuration + 30*time.Second
 	lockExpiresAt := now.Add(lockDuration)
 
-	col := s.db.Collection(db.CollectionTasks)
+	col := s.mongoDB.Collection(db.CollectionTasks)
 	updates := bson.M{
 		"status":          db.TaskStatusRunning,
 		"schedule_time":   now,
@@ -455,7 +455,7 @@ func (s *Server) RunTask(ctx context.Context, req *cloudtaskspb.RunTaskRequest) 
 		bgCtx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 
-		if err := processTask(bgCtx, s.db, s.logger, queue, t); err != nil {
+		if err := processTask(bgCtx, s.mongoDB, s.logger, queue, t); err != nil {
 			s.logger.Error("RunTask background processing failed",
 				zap.String("task_name", t.Name),
 				zap.Error(err),

@@ -17,7 +17,7 @@ import (
 // resource parent:
 //
 // * `cloudtasks.queues.getIamPolicy`
-func (s *Server) GetIamPolicy(context.Context, *iampb.GetIamPolicyRequest) (*iampb.Policy, error) {
+func (s *CloudTaskEmulator) GetIamPolicy(context.Context, *iampb.GetIamPolicyRequest) (*iampb.Policy, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetIamPolicy not implemented")
 }
 
@@ -32,7 +32,7 @@ func (s *Server) GetIamPolicy(context.Context, *iampb.GetIamPolicyRequest) (*iam
 // resource parent:
 //
 // * `cloudtasks.queues.setIamPolicy`
-func (s *Server) SetIamPolicy(context.Context, *iampb.SetIamPolicyRequest) (*iampb.Policy, error) {
+func (s *CloudTaskEmulator) SetIamPolicy(context.Context, *iampb.SetIamPolicyRequest) (*iampb.Policy, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SetIamPolicy not implemented")
 }
 
@@ -44,6 +44,6 @@ func (s *Server) SetIamPolicy(context.Context, *iampb.SetIamPolicyRequest) (*iam
 // Note: This operation is designed to be used for building permission-aware
 // UIs and command-line tools, not for authorization checking. This operation
 // may "fail open" without warning.
-func (s *Server) TestIamPermissions(context.Context, *iampb.TestIamPermissionsRequest) (*iampb.TestIamPermissionsResponse, error) {
+func (s *CloudTaskEmulator) TestIamPermissions(context.Context, *iampb.TestIamPermissionsRequest) (*iampb.TestIamPermissionsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method TestIamPermissions not implemented")
 }
