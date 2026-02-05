@@ -7,7 +7,7 @@ import (
 
 	cloudtasks "cloud.google.com/go/cloudtasks/apiv2"
 	"cloud.google.com/go/cloudtasks/apiv2/cloudtaskspb"
-	"github.com/nolanrsherman/gcpemulators/cloudtaskemulator/cloudtasksemulatorpb"
+	"github.com/nolanrsherman/gcpemulators/gcpemulators/gcpemulatorspb"
 	"github.com/stretchr/testify/require"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"google.golang.org/api/option"
@@ -26,7 +26,7 @@ func TestNewCloudTaskEmulator(t *testing.T) {
 	require.NotNil(t, emulator)
 	require.NotNil(t, cleanup)
 
-	readiness, err := emulator.Client.Readiness(context.Background(), &cloudtasksemulatorpb.ReadinessRequest{})
+	readiness, err := emulator.Client.Readiness(context.Background(), &gcpemulatorspb.ReadinessRequest{})
 	require.NoError(t, err)
 	require.True(t, readiness.Ready)
 

@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/nolanrsherman/gcpemulators/cloudtaskemulator/cloudtasksemulatorpb"
+	"github.com/nolanrsherman/gcpemulators/gcpemulators/gcpemulatorspb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -33,7 +33,7 @@ func WithPort(port int) func(*newCloudTaskEmulatorOptions) {
 }
 
 type CloudTaskEmulator struct {
-	Client cloudtasksemulatorpb.CloudTasksEmulatorServiceClient
+	Client gcpemulatorspb.GcpEmulatorClient
 	Port   int
 }
 
@@ -95,7 +95,7 @@ func NewCloudTaskEmulator(opts ...func(*newCloudTaskEmulatorOptions)) (cloudTask
 	if err != nil {
 		return nil, nil, err
 	}
-	cloudTasksClient := cloudtasksemulatorpb.NewCloudTasksEmulatorServiceClient(grpcConn)
+	cloudTasksClient := gcpemulatorspb.NewGcpEmulatorClient(grpcConn)
 	closeConnections := func() error {
 		return grpcConn.Close()
 	}
@@ -117,7 +117,7 @@ readyloop:
 			closeErr := errors.Join(closeProcess(), closeConnections())
 			return nil, nil, errors.Join(timeoutErr, closeErr)
 		case <-ticker.C:
-			readiness, err := cloudTasksClient.Readiness(ctxWaitTimeout, &cloudtasksemulatorpb.ReadinessRequest{})
+			readiness, err := cloudTasksClient.Readiness(ctxWaitTimeout, &gcpemulatorspb.ReadinessRequest{})
 			if err == nil && readiness.Ready {
 				break readyloop
 			}
