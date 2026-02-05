@@ -1,11 +1,11 @@
 syntax = "proto3";
 
-package cloudtasksemulatorpb;
+package gcpemulatorspb;
 
-option go_package = "github.com/nolanrsherman/gcpemulators/cloudtaskemulator/cloudtasksemulatorpb";
+option go_package = "github.com/nolanrsherman/gcpemulators/gcpemulators/gcpemulatorspb";
 
 // CloudTasksEmulatorService provides control and health check methods for the Cloud Tasks emulator.
-service CloudTasksEmulatorService {
+service GcpEmulator {
   // Readiness checks if the emulator is ready to accept requests.
   // Returns the readiness status of the emulator.
   rpc Readiness(ReadinessRequest) returns (ReadinessResponse);

@@ -17,8 +17,8 @@ import (
 
 	"cloud.google.com/go/cloudtasks/apiv2/cloudtaskspb"
 	"github.com/golang-migrate/migrate/v4"
-	"github.com/nolanrsherman/gcpemulators/cloudtaskemulator/cloudtasksemulatorpb"
 	"github.com/nolanrsherman/gcpemulators/cloudtaskemulator/db"
+	"github.com/nolanrsherman/gcpemulators/gcpemulators/gcpemulatorspb"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -37,7 +37,7 @@ type CloudTaskEmulator struct {
 	managedQueueIds map[primitive.ObjectID]struct{}
 	cancelFn        context.CancelFunc
 	cloudtaskspb.UnimplementedCloudTasksServer
-	cloudtasksemulatorpb.UnimplementedCloudTasksEmulatorServiceServer
+	gcpemulatorspb.UnimplementedGcpEmulatorServer
 }
 
 func (s *CloudTaskEmulator) Port() int {
@@ -58,10 +58,10 @@ func NewCloudTaskEmulator(mongoDBURI, dbBane string, logger *zap.Logger, grpcPor
 }
 
 func (s *CloudTaskEmulator) Run(ctx context.Context) error {
+	// TODO: create database with name if it doesn't already exist.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	s.cancelFn = cancel
-
 	defer s.logger.Sync()
 	err := db.RunMigrations(s.mongoDbURI, s.dbName)
 	if err != nil && !errors.Is(err, migrate.ErrNoChange) {
@@ -106,7 +106,7 @@ func (s *CloudTaskEmulator) runGRPCServer(ctx context.Context) error {
 	)
 
 	cloudtaskspb.RegisterCloudTasksServer(grpcServer, s)
-	cloudtasksemulatorpb.RegisterCloudTasksEmulatorServiceServer(grpcServer, s)
+	gcpemulatorspb.RegisterGcpEmulatorServer(grpcServer, s)
 
 	// Channel to signal server completion
 	serverDone := make(chan error, 1)
@@ -348,16 +348,16 @@ func (s *CloudTaskEmulator) processQueue(ctx context.Context, queue *db.Queue) e
 	}
 }
 
-func (s *CloudTaskEmulator) Readiness(context.Context, *cloudtasksemulatorpb.ReadinessRequest) (*cloudtasksemulatorpb.ReadinessResponse, error) {
-	return &cloudtasksemulatorpb.ReadinessResponse{
+func (s *CloudTaskEmulator) Readiness(context.Context, *gcpemulatorspb.ReadinessRequest) (*gcpemulatorspb.ReadinessResponse, error) {
+	return &gcpemulatorspb.ReadinessResponse{
 		Ready:   true,
 		Message: "Emulator is ready and accepting requests",
 	}, nil
 }
 
-func (s *CloudTaskEmulator) Stop(context.Context, *cloudtasksemulatorpb.StopRequest) (*cloudtasksemulatorpb.StopResponse, error) {
+func (s *CloudTaskEmulator) Stop(context.Context, *gcpemulatorspb.StopRequest) (*gcpemulatorspb.StopResponse, error) {
 	s.cancelFn()
-	return &cloudtasksemulatorpb.StopResponse{
+	return &gcpemulatorspb.StopResponse{
 		Success: true,
 		Message: "Emulator stopped",
 	}, nil

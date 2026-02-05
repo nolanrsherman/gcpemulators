@@ -12,12 +12,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nolanrsherman/gcpemulators/gcpemulators/gcpemulatorspb"
 	"github.com/nolanrsherman/gcpemulators/internal/testcommon"
 
 	cloudtasks "cloud.google.com/go/cloudtasks/apiv2"
 	"cloud.google.com/go/cloudtasks/apiv2/cloudtaskspb"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/nolanrsherman/gcpemulators/cloudtaskemulator/cloudtasksemulatorpb"
 	"github.com/nolanrsherman/gcpemulators/cloudtaskemulator/db"
 	"github.com/stretchr/testify/require"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -140,9 +140,9 @@ func TestCloudTaskEmulatorService_RpcServer(t *testing.T) {
 	conn, err := grpc.NewClient(fmt.Sprintf("localhost:%d", emulator.port), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 
-	cloudTaskClient := cloudtasksemulatorpb.NewCloudTasksEmulatorServiceClient(conn)
+	cloudTaskClient := gcpemulatorspb.NewGcpEmulatorClient(conn)
 
-	readiness, err := cloudTaskClient.Readiness(context.Background(), &cloudtasksemulatorpb.ReadinessRequest{})
+	readiness, err := cloudTaskClient.Readiness(context.Background(), &gcpemulatorspb.ReadinessRequest{})
 	require.NoError(t, err)
 	require.True(t, readiness.Ready)
 }

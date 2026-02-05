@@ -2,9 +2,9 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        (unknown)
-// source: cloudtaskemulator/cloudtasksemulatorpb/cloudtasksemulator.proto
+// source: gcpemulators/gcpemulatorspb/cloudtasksemulator.proto
 
-package cloudtasksemulatorpb
+package gcpemulatorspb
 
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
@@ -30,7 +30,7 @@ type ReadinessRequest struct {
 
 func (x *ReadinessRequest) Reset() {
 	*x = ReadinessRequest{}
-	mi := &file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_msgTypes[0]
+	mi := &file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -42,7 +42,7 @@ func (x *ReadinessRequest) String() string {
 func (*ReadinessRequest) ProtoMessage() {}
 
 func (x *ReadinessRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_msgTypes[0]
+	mi := &file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -55,7 +55,7 @@ func (x *ReadinessRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadinessRequest.ProtoReflect.Descriptor instead.
 func (*ReadinessRequest) Descriptor() ([]byte, []int) {
-	return file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_rawDescGZIP(), []int{0}
+	return file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_rawDescGZIP(), []int{0}
 }
 
 // ReadinessResponse contains the readiness status of the emulator.
@@ -71,7 +71,7 @@ type ReadinessResponse struct {
 
 func (x *ReadinessResponse) Reset() {
 	*x = ReadinessResponse{}
-	mi := &file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_msgTypes[1]
+	mi := &file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -83,7 +83,7 @@ func (x *ReadinessResponse) String() string {
 func (*ReadinessResponse) ProtoMessage() {}
 
 func (x *ReadinessResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_msgTypes[1]
+	mi := &file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -96,7 +96,7 @@ func (x *ReadinessResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadinessResponse.ProtoReflect.Descriptor instead.
 func (*ReadinessResponse) Descriptor() ([]byte, []int) {
-	return file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_rawDescGZIP(), []int{1}
+	return file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *ReadinessResponse) GetReady() bool {
@@ -122,7 +122,7 @@ type StopRequest struct {
 
 func (x *StopRequest) Reset() {
 	*x = StopRequest{}
-	mi := &file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_msgTypes[2]
+	mi := &file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -134,7 +134,7 @@ func (x *StopRequest) String() string {
 func (*StopRequest) ProtoMessage() {}
 
 func (x *StopRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_msgTypes[2]
+	mi := &file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -147,7 +147,7 @@ func (x *StopRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StopRequest.ProtoReflect.Descriptor instead.
 func (*StopRequest) Descriptor() ([]byte, []int) {
-	return file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_rawDescGZIP(), []int{2}
+	return file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_rawDescGZIP(), []int{2}
 }
 
 // StopResponse contains the result of stopping the emulator.
@@ -163,7 +163,7 @@ type StopResponse struct {
 
 func (x *StopResponse) Reset() {
 	*x = StopResponse{}
-	mi := &file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_msgTypes[3]
+	mi := &file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -175,7 +175,7 @@ func (x *StopResponse) String() string {
 func (*StopResponse) ProtoMessage() {}
 
 func (x *StopResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_msgTypes[3]
+	mi := &file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -188,7 +188,7 @@ func (x *StopResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StopResponse.ProtoReflect.Descriptor instead.
 func (*StopResponse) Descriptor() ([]byte, []int) {
-	return file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_rawDescGZIP(), []int{3}
+	return file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *StopResponse) GetSuccess() bool {
@@ -205,11 +205,11 @@ func (x *StopResponse) GetMessage() string {
 	return ""
 }
 
-var File_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto protoreflect.FileDescriptor
+var File_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto protoreflect.FileDescriptor
 
-const file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_rawDesc = "" +
+const file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_rawDesc = "" +
 	"\n" +
-	"?cloudtaskemulator/cloudtasksemulatorpb/cloudtasksemulator.proto\x12\x14cloudtasksemulatorpb\"\x12\n" +
+	"4gcpemulators/gcpemulatorspb/cloudtasksemulator.proto\x12\x0egcpemulatorspb\"\x12\n" +
 	"\x10ReadinessRequest\"C\n" +
 	"\x11ReadinessResponse\x12\x14\n" +
 	"\x05ready\x18\x01 \x01(\bR\x05ready\x12\x18\n" +
@@ -217,35 +217,35 @@ const file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_rawDe
 	"\vStopRequest\"B\n" +
 	"\fStopResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage2\xc8\x01\n" +
-	"\x19CloudTasksEmulatorService\x12\\\n" +
-	"\tReadiness\x12&.cloudtasksemulatorpb.ReadinessRequest\x1a'.cloudtasksemulatorpb.ReadinessResponse\x12M\n" +
-	"\x04Stop\x12!.cloudtasksemulatorpb.StopRequest\x1a\".cloudtasksemulatorpb.StopResponseBNZLgithub.com/nolanrsherman/gcpemulators/cloudtaskemulator/cloudtasksemulatorpbb\x06proto3"
+	"\amessage\x18\x02 \x01(\tR\amessage2\xa2\x01\n" +
+	"\vGcpEmulator\x12P\n" +
+	"\tReadiness\x12 .gcpemulatorspb.ReadinessRequest\x1a!.gcpemulatorspb.ReadinessResponse\x12A\n" +
+	"\x04Stop\x12\x1b.gcpemulatorspb.StopRequest\x1a\x1c.gcpemulatorspb.StopResponseBCZAgithub.com/nolanrsherman/gcpemulators/gcpemulators/gcpemulatorspbb\x06proto3"
 
 var (
-	file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_rawDescOnce sync.Once
-	file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_rawDescData []byte
+	file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_rawDescOnce sync.Once
+	file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_rawDescData []byte
 )
 
-func file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_rawDescGZIP() []byte {
-	file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_rawDescOnce.Do(func() {
-		file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_rawDesc), len(file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_rawDesc)))
+func file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_rawDescGZIP() []byte {
+	file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_rawDescOnce.Do(func() {
+		file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_rawDesc), len(file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_rawDesc)))
 	})
-	return file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_rawDescData
+	return file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_rawDescData
 }
 
-var file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
-var file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_goTypes = []any{
-	(*ReadinessRequest)(nil),  // 0: cloudtasksemulatorpb.ReadinessRequest
-	(*ReadinessResponse)(nil), // 1: cloudtasksemulatorpb.ReadinessResponse
-	(*StopRequest)(nil),       // 2: cloudtasksemulatorpb.StopRequest
-	(*StopResponse)(nil),      // 3: cloudtasksemulatorpb.StopResponse
+var file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_goTypes = []any{
+	(*ReadinessRequest)(nil),  // 0: gcpemulatorspb.ReadinessRequest
+	(*ReadinessResponse)(nil), // 1: gcpemulatorspb.ReadinessResponse
+	(*StopRequest)(nil),       // 2: gcpemulatorspb.StopRequest
+	(*StopResponse)(nil),      // 3: gcpemulatorspb.StopResponse
 }
-var file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_depIdxs = []int32{
-	0, // 0: cloudtasksemulatorpb.CloudTasksEmulatorService.Readiness:input_type -> cloudtasksemulatorpb.ReadinessRequest
-	2, // 1: cloudtasksemulatorpb.CloudTasksEmulatorService.Stop:input_type -> cloudtasksemulatorpb.StopRequest
-	1, // 2: cloudtasksemulatorpb.CloudTasksEmulatorService.Readiness:output_type -> cloudtasksemulatorpb.ReadinessResponse
-	3, // 3: cloudtasksemulatorpb.CloudTasksEmulatorService.Stop:output_type -> cloudtasksemulatorpb.StopResponse
+var file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_depIdxs = []int32{
+	0, // 0: gcpemulatorspb.GcpEmulator.Readiness:input_type -> gcpemulatorspb.ReadinessRequest
+	2, // 1: gcpemulatorspb.GcpEmulator.Stop:input_type -> gcpemulatorspb.StopRequest
+	1, // 2: gcpemulatorspb.GcpEmulator.Readiness:output_type -> gcpemulatorspb.ReadinessResponse
+	3, // 3: gcpemulatorspb.GcpEmulator.Stop:output_type -> gcpemulatorspb.StopResponse
 	2, // [2:4] is the sub-list for method output_type
 	0, // [0:2] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
@@ -253,26 +253,26 @@ var file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_depIdxs
 	0, // [0:0] is the sub-list for field type_name
 }
 
-func init() { file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_init() }
-func file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_init() {
-	if File_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto != nil {
+func init() { file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_init() }
+func file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_init() {
+	if File_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_rawDesc), len(file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_rawDesc), len(file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_rawDesc)),
 			NumEnums:      0,
 			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_goTypes,
-		DependencyIndexes: file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_depIdxs,
-		MessageInfos:      file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_msgTypes,
+		GoTypes:           file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_goTypes,
+		DependencyIndexes: file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_depIdxs,
+		MessageInfos:      file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_msgTypes,
 	}.Build()
-	File_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto = out.File
-	file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_goTypes = nil
-	file_cloudtaskemulator_cloudtasksemulatorpb_cloudtasksemulator_proto_depIdxs = nil
+	File_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto = out.File
+	file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_goTypes = nil
+	file_gcpemulators_gcpemulatorspb_cloudtasksemulator_proto_depIdxs = nil
 }

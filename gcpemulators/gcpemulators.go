@@ -1,20 +1,15 @@
 package gcpemulators
 
 import (
-	"bytes"
 	"context"
+	"errors"
 	"fmt"
-	"io"
 	"net"
+	"os"
+	"os/exec"
 	"strconv"
-	"sync"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/pkg/stdcopy"
-	"github.com/docker/go-connections/nat"
 	"github.com/nolanrsherman/gcpemulators/cloudtaskemulator/cloudtasksemulatorpb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -24,9 +19,11 @@ import (
 // function.
 
 type newCloudTaskEmulatorOptions struct {
-	port     int
-	imageTag string
-	doPull   bool
+	port             int
+	mongoUri         string
+	dbName           string
+	gcpemulatorsPath string
+	command          string
 }
 
 func WithPort(port int) func(*newCloudTaskEmulatorOptions) {
@@ -50,90 +47,62 @@ func findOpenPort() int {
 }
 
 func NewCloudTaskEmulator(opts ...func(*newCloudTaskEmulatorOptions)) (cloudTasksEmulator *CloudTaskEmulator, cleanup func() error, err error) {
-	imageName := "nolanrs/gcpemulators"
-	o := &newCloudTaskEmulatorOptions{
-		port:     findOpenPort(),
-		imageTag: "v0.2.0",
+	options := &newCloudTaskEmulatorOptions{
+		port:             findOpenPort(),
+		mongoUri:         "mongodb://localhost:27017/?directConnection=true",
+		dbName:           "cloudtaskemulator",
+		gcpemulatorsPath: "gcpemulators",
+		command:          "cloudtasks",
 	}
 	for _, opt := range opts {
-		opt(o)
+		opt(options)
 	}
 
-	ctx := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-	if err != nil {
+	cmd := exec.Command(options.gcpemulatorsPath,
+		options.command,
+		"-p", strconv.Itoa(options.port),
+		"--mongo-uri", options.mongoUri,
+		"--db-name", options.dbName,
+	)
+	// cmd.Stdout = os.Stdout
+	// cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
 		return nil, nil, err
 	}
-	defer cli.Close()
 
-	imageAndTag := fmt.Sprintf("%s:%s", imageName, o.imageTag)
+	closeProcess := func() error {
+		var err error
 
-	pullBuffer := bytes.NewBuffer([]byte{})
-	if o.doPull {
-		reader, err := cli.ImagePull(ctx, fmt.Sprintf("%s:%s", imageName, o.imageTag), image.PullOptions{})
-		if err != nil {
-			return nil, nil, err
+		pWait := make(chan error, 1)
+		go func() {
+			cmd.Process.Signal(os.Interrupt)
+			_, err := cmd.Process.Wait()
+			pWait <- err
+		}()
+		select {
+		case processWaitError := <-pWait:
+			if processWaitError != nil {
+				err = errors.Join(err, processWaitError, cmd.Process.Kill())
+			}
+		case <-time.After(5 * time.Second):
+			err = errors.Join(err, cmd.Process.Kill())
 		}
 
-		defer reader.Close()
-		// cli.ImagePull is asynchronous.
-		// The reader needs to be read completely for the pull operation to complete.
-		// If stdout is not required, consider using io.Discard instead of os.Stdout.
-		io.Copy(pullBuffer, reader)
+		return err
 	}
 
-	cloudTasksPort, err := nat.NewPort("tcp", strconv.Itoa(o.port))
-	if err != nil {
-		return nil, nil, err
-	}
-
-	resp, err := cli.ContainerCreate(ctx, &container.Config{
-		Image: imageAndTag,
-		Cmd:   []string{"cloudtasks", "-p", strconv.Itoa(o.port)},
-		Tty:   false,
-		ExposedPorts: nat.PortSet{
-			cloudTasksPort: struct{}{},
-		},
-	}, &container.HostConfig{
-		PortBindings: nat.PortMap{
-			cloudTasksPort: []nat.PortBinding{
-				{
-					HostIP:   "0.0.0.0",
-					HostPort: strconv.Itoa(o.port),
-				},
-			},
-		},
-	}, nil, nil, "")
-	if err != nil {
-		return nil, nil, err
-	}
-
-	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		return nil, nil, err
-	}
-
-	grpcConn, err := grpc.NewClient(fmt.Sprintf("localhost:%d", o.port), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	grpcConn, err := grpc.NewClient(fmt.Sprintf("localhost:%d", options.port), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, nil, err
 	}
 	cloudTasksClient := cloudtasksemulatorpb.NewCloudTasksEmulatorServiceClient(grpcConn)
+	closeConnections := func() error {
+		return grpcConn.Close()
+	}
 
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		statusCh, errCh := cli.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
-		select {
-		case err := <-errCh:
-			if err != nil {
-				panic(err)
-			}
-		case <-statusCh:
-		}
-	}()
-
+	ctx := context.Background()
 	// Wait until the client is ready, polling every 100ms with a 10s timeout.
-	ctxWaitTimeout, ctxWaitTimeoutCancel := context.WithTimeout(ctx, 20*time.Second)
+	ctxWaitTimeout, ctxWaitTimeoutCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer ctxWaitTimeoutCancel()
 
 	// Start with shorter polling interval for faster startup detection
@@ -144,10 +113,9 @@ readyloop:
 	for {
 		select {
 		case <-ctxWaitTimeout.Done():
-			_ = cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{
-				Force: true,
-			})
-			return nil, nil, fmt.Errorf("timeout waiting for emulator readiness: %w", ctxWaitTimeout.Err())
+			timeoutErr := fmt.Errorf("timeout waiting for emulator readiness: %w", ctxWaitTimeout.Err())
+			closeErr := errors.Join(closeProcess(), closeConnections())
+			return nil, nil, errors.Join(timeoutErr, closeErr)
 		case <-ticker.C:
 			readiness, err := cloudTasksClient.Readiness(ctxWaitTimeout, &cloudtasksemulatorpb.ReadinessRequest{})
 			if err == nil && readiness.Ready {
@@ -158,30 +126,8 @@ readyloop:
 
 	return &CloudTaskEmulator{
 			Client: cloudTasksClient,
-			Port:   o.port,
+			Port:   options.port,
 		}, func() error {
-			defer wg.Wait()
-			defer grpcConn.Close()
-			defer cli.Close()
-
-			// capture container logs.
-			out, err := cli.ContainerLogs(ctx, resp.ID, container.LogsOptions{ShowStdout: true})
-			if err != nil {
-				return fmt.Errorf("failed to capture container logs, %w", err)
-			}
-
-			logsBuffer := bytes.NewBuffer([]byte{})
-			stdcopy.StdCopy(logsBuffer, logsBuffer, out)
-
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			err = cli.ContainerRemove(ctx, resp.ID, container.RemoveOptions{
-				Force: true,
-			})
-			if err != nil {
-				err = fmt.Errorf("error occured %w, logs: \n %s", err, logsBuffer.String())
-				return err
-			}
-			return nil
+			return errors.Join(closeProcess(), closeConnections())
 		}, nil
 }
