@@ -38,7 +38,7 @@ func NewCloudTaskEmulator(opts ...func(*newCloudTaskEmulatorOptions)) (cloudTask
 	imageName := "nolanrs/gcpemulators"
 	o := &newCloudTaskEmulatorOptions{
 		port:     6441,
-		imageTag: "v0.1.2",
+		imageTag: "v0.2.0",
 	}
 	for _, opt := range opts {
 		opt(o)
