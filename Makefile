@@ -1,4 +1,4 @@
-.PHONY: build-version minor-version docker-build docker-push docker-build-push buf help
+.PHONY: build-version minor-version docker-build docker-push docker-build-push buf help publish-tag
 
 # Docker image name
 IMAGE_NAME := nolanrs/gcpemulators
@@ -20,6 +20,7 @@ help:
 	@echo "  docker-build     - Build Docker image with current version and latest tags"
 	@echo "  docker-push      - Push Docker image (both version and latest tags)"
 	@echo "  docker-build-push - Build and push Docker image"
+	@echo "  publish-tag      - Create and push a git tag based on current version"
 	@echo ""
 	@echo "Current version: $(VERSION)"
 
@@ -70,3 +71,16 @@ docker-push:
 # Build and push Docker image
 docker-build-push: docker-build docker-push
 	@echo "Build and push complete!"
+
+# Create and push a git tag based on current version
+publish-tag:
+	@echo "Publishing git tag for version: $(VERSION)"
+	@if git rev-parse "$(VERSION)" >/dev/null 2>&1; then \
+		echo "Error: Tag $(VERSION) already exists"; \
+		exit 1; \
+	fi
+	@git tag -a "$(VERSION)" -m "Release $(VERSION)"
+	@echo "Created tag: $(VERSION)"
+	@echo "Pushing tag to remote..."
+	@git push origin "$(VERSION)"
+	@echo "Tag $(VERSION) published successfully!"
