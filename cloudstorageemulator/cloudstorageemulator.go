@@ -130,8 +130,8 @@ func (e *CloudStorageEmulator) DeleteBucket(ctx context.Context, in *storage.Del
 		return nil, err
 	}
 
-	// Perform soft delete
-	if err := db.SoftDeleteBucketByName(ctx, e.mongodb, name); err != nil {
+	// Delete the bucket
+	if err := db.DeleteBucketByName(ctx, e.mongodb, name); err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			return nil, status.Errorf(codes.NotFound, "bucket %s not found", name)
 		}
@@ -266,10 +266,9 @@ func (e *CloudStorageEmulator) ListBuckets(ctx context.Context, in *storage.List
 
 	col := e.mongodb.Collection(db.CollectionBuckets)
 
-	// Build filter: match project and exclude soft-deleted buckets
+	// Build filter: match project
 	filter := bson.M{
 		"bucket.project": projectID,
-		"deleted_at":     bson.M{"$exists": false},
 	}
 
 	// Add prefix filter if provided
@@ -423,11 +422,11 @@ func (e *CloudStorageEmulator) DeleteObject(ctx context.Context, in *storage.Del
 		}
 	}
 
-	// Soft delete the object metadata
+	// Delete the object metadata
 	if in.Generation != 0 {
-		err = db.SoftDeleteObjectByBucketNameAndGeneration(ctx, e.mongodb, in.Bucket, in.Object, in.Generation)
+		err = db.DeleteObjectByBucketNameAndGeneration(ctx, e.mongodb, in.Bucket, in.Object, in.Generation)
 	} else {
-		err = db.SoftDeleteObjectByBucketAndName(ctx, e.mongodb, in.Bucket, in.Object)
+		err = db.DeleteObjectByBucketAndName(ctx, e.mongodb, in.Bucket, in.Object)
 	}
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
@@ -1030,12 +1029,12 @@ func (e *CloudStorageEmulator) WriteObject(server storage.Storage_WriteObjectSer
 		object.Checksums.Md5Hash = expectedMd5Hash
 	}
 
-	// Soft delete any existing object with the same bucket and name to allow overwrite
+	// Delete any existing object with the same bucket and name to allow overwrite
 	// This matches GCP behavior where overwriting creates a new generation
-	err = db.SoftDeleteObjectByBucketAndName(ctx, e.mongodb, bucketName, objectName)
+	err = db.DeleteObjectByBucketAndName(ctx, e.mongodb, bucketName, objectName)
 	if err != nil && !errors.Is(err, mongo.ErrNoDocuments) {
 		// If error is not "not found", it's a real error
-		return status.Errorf(codes.Internal, "failed to soft delete existing object: %v", err)
+		return status.Errorf(codes.Internal, "failed to delete existing object: %v", err)
 	}
 	// If ErrNoDocuments, that's fine - no existing object to delete
 
@@ -1112,10 +1111,9 @@ func (e *CloudStorageEmulator) ListObjects(ctx context.Context, in *storage.List
 
 	col := e.mongodb.Collection(db.CollectionObjects)
 
-	// Build filter: match bucket and exclude soft-deleted objects
+	// Build filter: match bucket
 	filter := bson.M{
 		"object.bucket": bucketID,
-		"deleted_at":    bson.M{"$exists": false},
 	}
 
 	// Add prefix filter if provided
@@ -1482,12 +1480,12 @@ func (e *CloudStorageEmulator) BidiWriteObject(server storage.Storage_BidiWriteO
 		object.Checksums.Md5Hash = expectedMd5Hash
 	}
 
-	// Soft delete any existing object with the same bucket and name to allow overwrite
+	// Delete any existing object with the same bucket and name to allow overwrite
 	// This matches GCP behavior where overwriting creates a new generation
-	err = db.SoftDeleteObjectByBucketAndName(ctx, e.mongodb, bucketName, objectName)
+	err = db.DeleteObjectByBucketAndName(ctx, e.mongodb, bucketName, objectName)
 	if err != nil && !errors.Is(err, mongo.ErrNoDocuments) {
 		// If error is not "not found", it's a real error
-		return status.Errorf(codes.Internal, "failed to soft delete existing object: %v", err)
+		return status.Errorf(codes.Internal, "failed to delete existing object: %v", err)
 	}
 	// If ErrNoDocuments, that's fine - no existing object to delete
 

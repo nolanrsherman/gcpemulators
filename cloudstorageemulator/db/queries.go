@@ -47,7 +47,6 @@ func SelectBucketByName(ctx context.Context, db *mongo.Database, name string) (*
 	var bucket BucketDocument
 	err := col.FindOne(ctx, bson.M{
 		"bucket.name": name,
-		"deleted_at":  bson.M{"$exists": false},
 	}).Decode(&bucket)
 	if err != nil {
 		return nil, fmt.Errorf("failed to select bucket by name: %w", err)
@@ -60,7 +59,6 @@ func SelectBucketByID(ctx context.Context, db *mongo.Database, id string) (*stor
 	var bucket BucketDocument
 	err := col.FindOne(ctx, bson.M{
 		"bucket.bucket_id": id,
-		"deleted_at":       bson.M{"$exists": false},
 	}).Decode(&bucket)
 	if err != nil {
 		return nil, fmt.Errorf("failed to select bucket by ID: %w", err)
@@ -68,30 +66,17 @@ func SelectBucketByID(ctx context.Context, db *mongo.Database, id string) (*stor
 	return bucket.Bucket, nil
 }
 
-// SoftDeleteBucketByName marks a bucket as deleted by setting DeletedAt. A TTL
-// index on this field is responsible for physically removing the document
-// after a retention period.
-func SoftDeleteBucketByName(ctx context.Context, db *mongo.Database, name string) error {
+// DeleteBucketByName permanently deletes a bucket
+func DeleteBucketByName(ctx context.Context, db *mongo.Database, name string) error {
 	col := db.Collection(CollectionBuckets)
-	now := time.Now()
-
-	res, err := col.UpdateOne(ctx,
-		bson.M{
-			"bucket.name": name,
-			"deleted_at":  bson.M{"$exists": false},
-		},
-		bson.M{
-			"$set": bson.M{
-				"deleted_at": now,
-				"updated_at": now,
-			},
-		},
-	)
+	res, err := col.DeleteOne(ctx, bson.M{
+		"bucket.name": name,
+	})
 	if err != nil {
-		return fmt.Errorf("failed to soft delete bucket: %w", err)
+		return fmt.Errorf("failed to delete bucket: %w", err)
 	}
-	if res.MatchedCount == 0 {
-		return fmt.Errorf("failed to soft delete bucket: %w", mongo.ErrNoDocuments)
+	if res.DeletedCount == 0 {
+		return fmt.Errorf("failed to delete bucket: %w", mongo.ErrNoDocuments)
 	}
 	return nil
 }
@@ -230,7 +215,6 @@ func SelectObjectDocumentByBucketAndName(ctx context.Context, db *mongo.Database
 	err := col.FindOne(ctx, bson.M{
 		"object.bucket": bucket,
 		"object.name":   objectName,
-		"deleted_at":    bson.M{"$exists": false},
 	}).Decode(&objDoc)
 	if err != nil {
 		return nil, fmt.Errorf("failed to select object by bucket and name: %w", err)
@@ -255,7 +239,6 @@ func SelectObjectDocumentByBucketNameAndGeneration(ctx context.Context, db *mong
 		"object.bucket":     bucket,
 		"object.name":       objectName,
 		"object.generation": generation,
-		"deleted_at":        bson.M{"$exists": false},
 	}).Decode(&objDoc)
 	if err != nil {
 		return nil, fmt.Errorf("failed to select object by bucket, name, and generation: %w", err)
@@ -263,57 +246,35 @@ func SelectObjectDocumentByBucketNameAndGeneration(ctx context.Context, db *mong
 	return &objDoc, nil
 }
 
-// SoftDeleteObjectByBucketAndName marks an object as deleted by setting DeletedAt
-func SoftDeleteObjectByBucketAndName(ctx context.Context, db *mongo.Database, bucket, objectName string) error {
+// DeleteObjectByBucketAndName permanently deletes an object
+func DeleteObjectByBucketAndName(ctx context.Context, db *mongo.Database, bucket, objectName string) error {
 	col := db.Collection(CollectionObjects)
-	now := time.Now()
-
-	res, err := col.UpdateOne(ctx,
-		bson.M{
-			"object.bucket": bucket,
-			"object.name":   objectName,
-			"deleted_at":    bson.M{"$exists": false},
-		},
-		bson.M{
-			"$set": bson.M{
-				"deleted_at": now,
-				"updated_at": now,
-			},
-		},
-	)
+	res, err := col.DeleteOne(ctx, bson.M{
+		"object.bucket": bucket,
+		"object.name":   objectName,
+	})
 	if err != nil {
-		return fmt.Errorf("failed to soft delete object: %w", err)
+		return fmt.Errorf("failed to delete object: %w", err)
 	}
-	if res.MatchedCount == 0 {
-		return fmt.Errorf("failed to soft delete object: %w", mongo.ErrNoDocuments)
+	if res.DeletedCount == 0 {
+		return fmt.Errorf("failed to delete object: %w", mongo.ErrNoDocuments)
 	}
 	return nil
 }
 
-// SoftDeleteObjectByBucketNameAndGeneration marks a specific generation of an object as deleted
-func SoftDeleteObjectByBucketNameAndGeneration(ctx context.Context, db *mongo.Database, bucket, objectName string, generation int64) error {
+// DeleteObjectByBucketNameAndGeneration permanently deletes a specific generation of an object
+func DeleteObjectByBucketNameAndGeneration(ctx context.Context, db *mongo.Database, bucket, objectName string, generation int64) error {
 	col := db.Collection(CollectionObjects)
-	now := time.Now()
-
-	res, err := col.UpdateOne(ctx,
-		bson.M{
-			"object.bucket":     bucket,
-			"object.name":       objectName,
-			"object.generation": generation,
-			"deleted_at":        bson.M{"$exists": false},
-		},
-		bson.M{
-			"$set": bson.M{
-				"deleted_at": now,
-				"updated_at": now,
-			},
-		},
-	)
+	res, err := col.DeleteOne(ctx, bson.M{
+		"object.bucket":     bucket,
+		"object.name":       objectName,
+		"object.generation": generation,
+	})
 	if err != nil {
-		return fmt.Errorf("failed to soft delete object: %w", err)
+		return fmt.Errorf("failed to delete object: %w", err)
 	}
-	if res.MatchedCount == 0 {
-		return fmt.Errorf("failed to soft delete object: %w", mongo.ErrNoDocuments)
+	if res.DeletedCount == 0 {
+		return fmt.Errorf("failed to delete object: %w", mongo.ErrNoDocuments)
 	}
 	return nil
 }
