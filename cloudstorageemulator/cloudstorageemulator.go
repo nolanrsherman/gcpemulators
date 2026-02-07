@@ -1030,6 +1030,15 @@ func (e *CloudStorageEmulator) WriteObject(server storage.Storage_WriteObjectSer
 		object.Checksums.Md5Hash = expectedMd5Hash
 	}
 
+	// Soft delete any existing object with the same bucket and name to allow overwrite
+	// This matches GCP behavior where overwriting creates a new generation
+	err = db.SoftDeleteObjectByBucketAndName(ctx, e.mongodb, bucketName, objectName)
+	if err != nil && !errors.Is(err, mongo.ErrNoDocuments) {
+		// If error is not "not found", it's a real error
+		return status.Errorf(codes.Internal, "failed to soft delete existing object: %v", err)
+	}
+	// If ErrNoDocuments, that's fine - no existing object to delete
+
 	// Store object metadata
 	err = db.InsertObject(ctx, e.mongodb, object, upload.GridFSFileID)
 	if err != nil {
@@ -1472,6 +1481,15 @@ func (e *CloudStorageEmulator) BidiWriteObject(server storage.Storage_BidiWriteO
 		}
 		object.Checksums.Md5Hash = expectedMd5Hash
 	}
+
+	// Soft delete any existing object with the same bucket and name to allow overwrite
+	// This matches GCP behavior where overwriting creates a new generation
+	err = db.SoftDeleteObjectByBucketAndName(ctx, e.mongodb, bucketName, objectName)
+	if err != nil && !errors.Is(err, mongo.ErrNoDocuments) {
+		// If error is not "not found", it's a real error
+		return status.Errorf(codes.Internal, "failed to soft delete existing object: %v", err)
+	}
+	// If ErrNoDocuments, that's fine - no existing object to delete
 
 	// Store object metadata
 	err = db.InsertObject(ctx, e.mongodb, object, upload.GridFSFileID)

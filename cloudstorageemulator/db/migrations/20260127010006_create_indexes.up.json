@@ -42,7 +42,10 @@
           "object.name": 1
         },
         "name": "idx_objects_bucket_name_unique",
-        "unique": true
+        "unique": true,
+        "partialFilterExpression": {
+          "deleted_at": { "$exists": false }
+        }
       }
     ]
   }
