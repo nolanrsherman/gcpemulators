@@ -942,12 +942,16 @@ func (e *CloudStorageEmulator) WriteObject(server storage.Storage_WriteObjectSer
 				}
 			}
 
-			// Write to GridFS stream
-			n, err := uploadStream.Write(data)
-			if err != nil {
-				return status.Errorf(codes.Internal, "failed to write to GridFS: %v", err)
+			// Write to GridFS stream - loop until all bytes are written
+			written := 0
+			for written < len(data) {
+				n, err := uploadStream.Write(data[written:])
+				if err != nil {
+					return status.Errorf(codes.Internal, "failed to write to GridFS: %v", err)
+				}
+				written += n
 			}
-			totalWritten += int64(n)
+			totalWritten += int64(written)
 			allData = append(allData, data...)
 		}
 
@@ -1393,12 +1397,16 @@ func (e *CloudStorageEmulator) BidiWriteObject(server storage.Storage_BidiWriteO
 				}
 			}
 
-			// Write to GridFS stream
-			n, err := uploadStream.Write(data)
-			if err != nil {
-				return status.Errorf(codes.Internal, "failed to write to GridFS: %v", err)
+			// Write to GridFS stream - loop until all bytes are written
+			written := 0
+			for written < len(data) {
+				n, err := uploadStream.Write(data[written:])
+				if err != nil {
+					return status.Errorf(codes.Internal, "failed to write to GridFS: %v", err)
+				}
+				written += n
 			}
-			totalWritten += int64(n)
+			totalWritten += int64(written)
 			allData = append(allData, data...)
 		}
 
